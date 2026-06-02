@@ -24,11 +24,19 @@ target_include_directories(stakml PUBLIC include)
 add_executable(test_tensor tests/test_tensor.cpp)
 target_link_libraries(test_tensor stakml)
 
-# ── Examples ─────────────────────────────────────────────────────────────────
-# add_executable(mnist_mlp examples/mnist_mlp.cpp)
-# target_link_libraries(mnist_mlp stakml)
-# (uncomment in week 4)
+add_executable(test_graph tests/test_graph.cpp)
+target_link_libraries(test_graph stakml)
 
+add_executable(bench tests/bench.cpp)
+target_link_libraries(bench stakml)
+
+add_executable(test_opts tests/test_opts.cpp)
+target_link_libraries(test_opts stakml)
+
+# ── Examples ─────────────────────────────────────────────────────────────────
+# add_executable(mnist_mlp examples/mnist_mlp.cpp)j
+# target_link_libraries(mnist_mlp stakml)
+# (uncomment in week 4
 # ── Convenience target ───────────────────────────────────────────────────────
 add_custom_target(run_tests
     COMMAND ./test_tensor

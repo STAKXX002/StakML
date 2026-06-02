@@ -49,6 +49,8 @@ public:
     // memory — no copy. The last Tensor to die frees the buffer.
     // This is exactly how PyTorch's storage system works.
     //
+    std::string op_name_;
+    std::vector<std::shared_ptr<Tensor>> inputs_;
     std::shared_ptr<std::vector<float>> data_;
     std::vector<size_t> shape_;    // e.g. {2, 3} for a 2×3 matrix
     std::vector<size_t> strides_;  // e.g. {3, 1} for row-major 2×3
@@ -288,10 +290,16 @@ public:
         size_t M = shape_[0], K = shape_[1], N = other.shape_[1];
         Tensor result({M, N}, 0.0f);
 
+        const float* A = raw_ptr();
+        const float* B = other.raw_ptr();
+        float*       C = result.raw_ptr();
+
         for (size_t i = 0; i < M; ++i)
-            for (size_t k = 0; k < K; ++k)       // k-loop outside j: cache-friendly
+            for (size_t k = 0; k < K; ++k) {
+                float a_ik = A[i*K + k];          // no bounds check, no vector alloc
                 for (size_t j = 0; j < N; ++j)
-                    result.at({i,j}) += at({i,k}) * other.at({k,j});
+                    C[i*N + j] += a_ik * B[k*N + j];
+            }
 
         return result;
     }
@@ -349,8 +357,10 @@ public:
 
     Tensor relu() const {
         Tensor result(shape_);
-        for (size_t i = 0; i < num_elements(); ++i)
-            result.raw_ptr()[i] = std::max(0.0f, raw_ptr()[i]);
+        for (size_t i = 0; i < num_elements(); ++i){
+            float v = raw_ptr()[i];
+            result.raw_ptr()[i] = v > 0.0f ? v : 0.0f;
+        }
         return result;
     }
 
