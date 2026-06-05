@@ -11,6 +11,7 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <unordered_set>
 
 namespace stakml {
 
@@ -304,6 +305,83 @@ public:
         return result;
     }
 
+    // ── Transposed matmul helpers (used in autograd) ──────────────────────────
+    //
+    // matmul_A_BT: this @ B.T
+    //   this: {M,K},  B: {N,K}  →  result: {M,N}
+    //
+    // Strategy: transpose B into a fresh {K,N} buffer (one memcpy-style loop),
+    // then run the standard i-k-j matmul which has perfect cache behaviour on
+    // both A (row stride K) and BT (row stride N).
+    // This beats a fused no-copy loop because the B transposition (~100KB for
+    // the 784×128 weight) fits in L2 and the subsequent matmul streams it
+    // sequentially — no stride-K scatter writes.
+    //
+    // Used in backward: dA = dC @ W.T   where dC:{batch,out}, W:{in,out}
+    //
+    Tensor matmul_A_BT(const Tensor& B) const {
+        // this:{M,K}, B:{N,K} → {M,N}
+        if (ndim() != 2 || B.ndim() != 2)
+            throw std::runtime_error("matmul_A_BT: both tensors must be 2-D");
+        if (shape_[1] != B.shape_[1])
+            throw std::runtime_error("matmul_A_BT: inner dimensions must match (K)");
+
+        size_t M = shape_[0], K = shape_[1], N = B.shape_[0];
+
+        // Step 1: transpose B → BT {K, N}  (one sequential read + write)
+        Tensor BT({K, N}, 0.0f);
+        const float* b  = B.raw_ptr();
+        float*       bt = BT.raw_ptr();
+        for (size_t n = 0; n < N; ++n)
+            for (size_t k = 0; k < K; ++k)
+                bt[k*N + n] = b[n*K + k];
+
+        // Step 2: standard i-k-j matmul on this:{M,K} @ BT:{K,N}
+        Tensor result({M, N}, 0.0f);
+        const float* a = raw_ptr();
+        float*       c = result.raw_ptr();
+        for (size_t m = 0; m < M; ++m)
+            for (size_t k = 0; k < K; ++k) {
+                float a_mk = a[m*K + k];
+                for (size_t n = 0; n < N; ++n)
+                    c[m*N + n] += a_mk * bt[k*N + n];
+            }
+        return result;
+    }
+
+    // matmul_AT_B: this.T @ B
+    //   this: {M,K},  B: {M,N}  →  result: {K,N}
+    //
+    // Used in backward: dW = X.T @ dC   where X:{batch,in}, dC:{batch,out}
+    // M=batch is small (32), K=in (784), N=out (128).
+    // The i-k-j loop over k-m-n keeps C[k,n] writes sequential and
+    // B[m,n] reads sequential (streaming), which is already well-behaved
+    // for small M.
+    //
+    Tensor matmul_AT_B(const Tensor& B) const {
+        // this:{M,K}, B:{M,N} → {K,N}
+        if (ndim() != 2 || B.ndim() != 2)
+            throw std::runtime_error("matmul_AT_B: both tensors must be 2-D");
+        if (shape_[0] != B.shape_[0])
+            throw std::runtime_error("matmul_AT_B: outer dimensions must match (M)");
+
+        size_t M = shape_[0], K = shape_[1], N = B.shape_[1];
+        Tensor result({K, N}, 0.0f);
+
+        const float* a = raw_ptr();
+        const float* b = B.raw_ptr();
+        float*       c = result.raw_ptr();
+
+        // result[k][n] += this[m][k] * B[m][n]
+        for (size_t m = 0; m < M; ++m)
+            for (size_t k = 0; k < K; ++k) {
+                float a_mk = a[m*K + k];
+                for (size_t n = 0; n < N; ++n)
+                    c[k*N + n] += a_mk * b[m*N + n];
+            }
+        return result;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Reductions
     // ─────────────────────────────────────────────────────────────────────────
@@ -331,17 +409,49 @@ public:
         if (axis >= ndim())
             throw std::runtime_error("sum: axis out of range");
 
+        // ── Fast path: 2-D contiguous (the only case used in practice) ──────────
+        // sum(0): collapse rows → result shape {cols}
+        //   result[j] = sum over i of input[i*cols + j]
+        // sum(1): collapse cols → result shape {rows}
+        //   result[i] = sum over j of input[i*cols + j]
+        //
+        // No index vectors, no heap allocs, no bounds checks — just pointer math.
+        if (ndim() == 2 && is_contiguous()) {
+            size_t rows = shape_[0], cols = shape_[1];
+            const float* src = raw_ptr();
+
+            if (axis == 0) {
+                // sum over rows → shape {cols}
+                Tensor result({cols}, 0.0f);
+                float* dst = result.raw_ptr();
+                for (size_t i = 0; i < rows; ++i)
+                    for (size_t j = 0; j < cols; ++j)
+                        dst[j] += src[i*cols + j];
+                return result;
+            } else {  // axis == 1
+                // sum over cols → shape {rows}
+                Tensor result({rows}, 0.0f);
+                float* dst = result.raw_ptr();
+                for (size_t i = 0; i < rows; ++i) {
+                    float acc = 0.0f;
+                    for (size_t j = 0; j < cols; ++j)
+                        acc += src[i*cols + j];
+                    dst[i] = acc;
+                }
+                return result;
+            }
+        }
+
+        // ── General path: N-D (keep for correctness, not performance) ───────────
         std::vector<size_t> out_shape;
         for (size_t i = 0; i < ndim(); ++i)
             if (i != axis) out_shape.push_back(shape_[i]);
         if (out_shape.empty()) out_shape = {1};
 
         Tensor result(out_shape, 0.0f);
-        // iterate over all elements of this tensor
         size_t n = num_elements();
         for (size_t flat = 0; flat < n; ++flat) {
             auto idx = unravel_index(flat, shape_);
-            // build output index by dropping the axis dimension
             std::vector<size_t> out_idx;
             for (size_t i = 0; i < ndim(); ++i)
                 if (i != axis) out_idx.push_back(idx[i]);
@@ -384,18 +494,30 @@ public:
             throw std::runtime_error("softmax: only 2-D supported for now");
         Tensor result(shape_);
         size_t rows = shape_[0], cols = shape_[1];
+
+        const float* src = raw_ptr();      // ← read from here
+        float*       dst = result.raw_ptr(); // ← write to here
+
         for (size_t i = 0; i < rows; ++i) {
-            // subtract max for numerical stability
-            float max_val = at({i, 0});
+            const float* row_src = src + i*cols;
+            float*       row_dst = dst + i*cols;
+
+            // find max in this row (numerical stability)
+            float max_val = row_src[0];
             for (size_t j = 1; j < cols; ++j)
-                max_val = std::max(max_val, at({i, j}));
+                max_val = std::max(max_val, row_src[j]);
+
+            // exp(x - max) and accumulate sum
             float sum_exp = 0.0f;
             for (size_t j = 0; j < cols; ++j) {
-                result.at({i,j}) = std::exp(at({i,j}) - max_val);
-                sum_exp += result.at({i,j});
+                row_dst[j] = std::exp(row_src[j] - max_val);
+                sum_exp += row_dst[j];
             }
+
+            // normalize
+            float inv_sum = 1.0f / sum_exp;
             for (size_t j = 0; j < cols; ++j)
-                result.at({i,j}) /= sum_exp;
+                row_dst[j] *= inv_sum;
         }
         return result;
     }
@@ -425,8 +547,12 @@ public:
     // std = sqrt(2 / (fan_in + fan_out))
     static Tensor xavier(const std::vector<size_t>& shape) {
         if (shape.size() < 2) throw std::runtime_error("xavier: need at least 2 dims");
-        float fan_in  = static_cast<float>(shape[0]);
-        float fan_out = static_cast<float>(shape[1]);
+        // 2D {in, out}:            fan_in=shape[0],          fan_out=shape[1]
+        // 4D {out_ch,in_ch,kH,kW}: fan_in=shape[1]*kH*kW,   fan_out=shape[0]*kH*kW
+        size_t receptive = 1;
+        for (size_t i = 2; i < shape.size(); ++i) receptive *= shape[i];
+        float fan_in  = static_cast<float>(shape[1] * receptive);
+        float fan_out = static_cast<float>(shape[0] * receptive);
         float std = std::sqrt(2.0f / (fan_in + fan_out));
         return randn(shape, 0.0f, std);
     }
@@ -493,6 +619,48 @@ public:
     Tensor& grad() {
         if (!grad_) grad_ = std::make_shared<Tensor>(shape_, 0.0f);
         return *grad_;
+    }
+
+    void backward() {
+        // Seed the output gradient.
+        // Default: dL/dL = 1 (all-ones), used when calling backward() on a
+        // scalar loss computed directly (e.g. out.sum().backward()).
+        //
+        // Exception: if grad_ already contains non-trivial values, keep them.
+        // This allows nll_loss (and other external loss functions) to pre-seed
+        // dL/d(log_probs) before calling backward(), so the correct upstream
+        // gradient propagates through log_softmax rather than all-ones.
+        //
+        // Rule: only write the all-ones seed if grad_ is null OR all zeros.
+        bool needs_seed = true;
+        if (grad_) {
+            const float* gp = grad_->raw_ptr();
+            size_t n = grad_->num_elements();
+            for (size_t i = 0; i < n; ++i) {
+                if (gp[i] != 0.0f) { needs_seed = false; break; }
+            }
+        }
+        if (needs_seed)
+            grad() = Tensor(shape_, 1.0f);
+
+        // DFS to build topological order
+        std::vector<Tensor*> topo;
+        std::unordered_set<Tensor*> visited;
+
+        std::function<void(Tensor*)> build_topo = [&](Tensor* t) {
+            if (visited.count(t)) return;
+            visited.insert(t);
+            for (auto& inp : t->inputs_)
+                build_topo(inp.get());
+            topo.push_back(t);
+        };
+        build_topo(this);
+
+        // topo is leaves-first, so reverse gives loss-first (correct backward order)
+        std::reverse(topo.begin(), topo.end());
+
+        for (Tensor* t : topo)
+            if (t->backward_fn_) t->backward_fn_();
     }
 
 private:
