@@ -21,6 +21,19 @@
 namespace stakml {
 namespace nn {
 
+// ── Base Module ──────────────────────────────────────────────────────────────
+struct Module {
+    virtual ~Module() = default;
+    
+    // Every layer takes a shared pointer and returns a new Tensor node
+    virtual Tensor forward(std::shared_ptr<Tensor> x) = 0;
+    
+    // By default, a layer has no parameters (e.g., ReLU)
+    virtual std::vector<std::shared_ptr<Tensor>> parameters() const {
+        return {}; 
+    }
+};
+
 // ── Linear ───────────────────────────────────────────────────────────────────
 // y = x @ W + b
 //
@@ -29,41 +42,31 @@ namespace nn {
 //   b : {1, out_features}
 //   y : {batch, out_features}
 //
-// NOTE on W shape:
-//   W is {in, out}, so x @ W works directly as {batch,in} @ {in,out} → {batch,out}.
-//   PyTorch stores W as {out, in} and does x @ W.T — same math, different convention.
-//   Ours is simpler for now; we'll revisit if BLAS tiling matters later.
-//
-struct Linear {
+struct Linear : public Module {
     size_t in_features;
     size_t out_features;
 
-    std::shared_ptr<Tensor> W;   // {in_features, out_features}
-    std::shared_ptr<Tensor> b;   // {1, out_features}
+    std::shared_ptr<Tensor> W;
+    std::shared_ptr<Tensor> b;
 
-    Linear(size_t in, size_t out)
-        : in_features(in), out_features(out)
-    {
+    Linear(size_t in, size_t out) : in_features(in), out_features(out) {
         W = std::make_shared<Tensor>(Tensor::xavier({in, out}));
         b = std::make_shared<Tensor>(Tensor::zeros({1, out}));
+        W->requires_grad_ = true;
+        b->requires_grad_ = true;
     }
 
-    // x: {batch, in_features} → {batch, out_features}
-    Tensor forward(std::shared_ptr<Tensor> x) const {
+    Tensor forward(std::shared_ptr<Tensor> x) override {
         if (x->ndim() != 2)
             throw std::runtime_error("Linear::forward: input must be 2-D {batch, in}");
         if (x->shape_[1] != in_features)
             throw std::runtime_error("Linear::forward: input cols must equal in_features");
 
-        // x @ W  →  {batch, out_features}
         auto xW = std::make_shared<Tensor>(ops::matmul(x, W));
-
-        // xW + b  →  {batch, out_features}  (broadcast over batch dim)
         return ops::add_bias(xW, b);
     }
 
-    // Collect parameters — Week 4 optimizer will iterate these
-    std::vector<std::shared_ptr<Tensor>> parameters() const {
+    std::vector<std::shared_ptr<Tensor>> parameters() const override {
         return {W, b};
     }
 
@@ -74,23 +77,59 @@ struct Linear {
     }
 };
 
+// ── Activations ──────────────────────────────────────────────────────────────
+struct ReLU : public Module {
+    Tensor forward(std::shared_ptr<Tensor> x) override {
+        return ops::relu(x);
+    }
+};
+
+struct Sigmoid : public Module {
+    Tensor forward(std::shared_ptr<Tensor> x) override {
+        return ops::sigmoid(x);
+    }
+};
+
 // ── Sequential ───────────────────────────────────────────────────────────────
 // CONCEPT: chains layers so you can write:
 //
 //   Sequential model({ fc1, relu_layer, fc2, softmax_layer });
 //   Tensor out = model.forward(x);
 //
-// For now this holds Linear layers + named activations.
-// A proper design uses a base Layer interface — that's fine for Week 4.
-// For Week 2 we just need shape flow to work end-to-end.
-//
-// Usage:
-//   auto out = fc1.forward(x_ptr);               // manual chaining
-//   auto h   = ops::relu(make_shared<Tensor>(out));
-//   auto out2 = fc2.forward(make_shared<Tensor>(h));
-//
-// Sequential is optional sugar — build the MLP manually first.
-//
+struct Sequential : public Module {
+    std::vector<std::shared_ptr<Module>> layers;
+
+    // Constructor takes an initializer list of shared_ptr<Module>
+    Sequential(std::initializer_list<std::shared_ptr<Module>> init) 
+        : layers(init) {}
+
+    Tensor forward(std::shared_ptr<Tensor> x) override {
+        if (layers.empty()) throw std::runtime_error("Sequential model is empty");
+
+        std::shared_ptr<Tensor> current_input = x;
+        
+        for (size_t i = 0; i < layers.size(); ++i) {
+            Tensor out = layers[i]->forward(current_input);
+            
+            // If it's the last layer, just return the final Tensor
+            if (i == layers.size() - 1) {
+                return out;
+            }
+            // Otherwise, wrap it in a shared_ptr to pass to the next layer
+            current_input = std::make_shared<Tensor>(out);
+        }
+        return *current_input; // Fallback
+    }
+
+    std::vector<std::shared_ptr<Tensor>> parameters() const override {
+        std::vector<std::shared_ptr<Tensor>> all_params;
+        for (const auto& layer : layers) {
+            auto layer_params = layer->parameters();
+            all_params.insert(all_params.end(), layer_params.begin(), layer_params.end());
+        }
+        return all_params;
+    }
+};
 
 } // namespace nn
 } // namespace stakml
