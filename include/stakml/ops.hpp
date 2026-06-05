@@ -27,9 +27,34 @@ namespace stakml::ops {
 // ── matmul ───────────────────────────────────────────────────────────────────
 // (M×K) @ (K×N) → (M×N)
 inline Tensor matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
-    Tensor result = a->matmul(*b);   // compute (existing Tensor logic)
+    Tensor result = a->matmul(*b);
     result.op_name_ = "matmul";
-    result.inputs_  = {a, b};        // reference — no copy
+    result.inputs_  = {a, b};
+
+    result.grad();
+    auto grad_out = result.grad_;
+
+    result.backward_fn_ = [a, b, grad_out]() {
+        // dC shape: {M, N}
+        // dA = dC @ B.T  — use matmul_A_BT: no copy of B
+        // dB = A.T @ dC  — use matmul_AT_B: no copy of A
+
+        const Tensor& dC = *grad_out;
+
+        Tensor dA = dC.matmul_A_BT(*b);   // dC:{M,N}, b:{K,N} → dA:{M,K}
+        Tensor dB = a->matmul_AT_B(dC);   // a:{M,K}, dC:{M,N} → dB:{K,N}
+
+        // accumulate into inputs' grads
+        size_t nA = a->num_elements();
+        size_t nB = b->num_elements();
+        float* gaP = a->grad().raw_ptr();
+        float* gbP = b->grad().raw_ptr();
+        const float* daP = dA.raw_ptr();
+        const float* dbP = dB.raw_ptr();
+        for (size_t i = 0; i < nA; ++i) gaP[i] += daP[i];
+        for (size_t i = 0; i < nB; ++i) gbP[i] += dbP[i];
+    };
+
     return result;
 }
 
@@ -74,6 +99,24 @@ inline Tensor add_bias(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> bias) 
 
     result.op_name_ = "add_bias";
     result.inputs_  = {x, bias};
+
+    // ── backward ─────────────────────────────────────────────────────────────
+    result.grad();                    // force-create grad_ before capture
+    auto grad_out = result.grad_;
+
+    result.backward_fn_ = [x, bias, grad_out]() {
+        size_t batch = x->shape_[0], cols = x->shape_[1];
+        const float* gop = grad_out->raw_ptr();   // dL/d_result
+        float*       gxp = x->grad().raw_ptr();   // accumulate into x
+        float*       gbp = bias->grad().raw_ptr(); // accumulate into bias
+
+        for (size_t i = 0; i < batch; ++i)
+            for (size_t j = 0; j < cols; ++j) {
+                gxp[i*cols + j] += gop[i*cols + j];  // d_x = d_out (pass-through)
+                gbp[j]          += gop[i*cols + j];  // d_bias = sum over batch
+            }
+    };
+
     return result;
 }
 
@@ -82,6 +125,21 @@ inline Tensor relu(std::shared_ptr<Tensor> x) {
     Tensor result = x->relu();
     result.op_name_ = "relu";
     result.inputs_  = {x};
+
+    result.grad();                      // ensure grad_ exists before capture
+    auto grad_out = result.grad_;       // shared_ptr, safe to capture
+
+    result.backward_fn_ = [x, grad_out]() {
+        // d_x += d_out * (x > 0)
+        // grad_out holds dL/d_result, we push dL/dx into x->grad()
+        size_t n = x->num_elements();
+        const float* xp  = x->raw_ptr();
+        const float* gop = grad_out->raw_ptr();
+        float*       gxp = x->grad().raw_ptr();   // accumulate
+        for (size_t i = 0; i < n; ++i)
+            gxp[i] += gop[i] * (xp[i] > 0.0f ? 1.0f : 0.0f);
+    };
+
     return result;
 }
 
