@@ -288,21 +288,44 @@ public:
         if (shape_[1] != other.shape_[0])
             throw std::runtime_error("matmul: inner dimensions must match");
 
-        size_t M = shape_[0], K = shape_[1], N = other.shape_[1];
-        Tensor result({M, N}, 0.0f);
+    size_t M = shape_[0], K = shape_[1], N = other.shape_[1];
+    Tensor result({M, N}, 0.0f);
 
-        const float* A = raw_ptr();
-        const float* B = other.raw_ptr();
-        float*       C = result.raw_ptr();
+    const float* A = raw_ptr();
+    const float* B = other.raw_ptr();
+    float* C = result.raw_ptr();
 
-        for (size_t i = 0; i < M; ++i)
-            for (size_t k = 0; k < K; ++k) {
-                float a_ik = A[i*K + k];          // no bounds check, no vector alloc
-                for (size_t j = 0; j < N; ++j)
-                    C[i*N + j] += a_ik * B[k*N + j];
+    // 64 is a safe default for L1 cache blocking. You can tune this (e.g., 32, 128).
+    const size_t BLOCK = 64; 
+
+    #pragma omp parallel for schedule(static) collapse(2)
+    for (size_t i = 0; i < M; i += BLOCK) {
+        for (size_t j = 0; j < N; j += BLOCK) {
+            for (size_t k = 0; k < K; k += BLOCK) {
+                
+                // Calculate block boundaries
+                size_t i_end = std::min(i + BLOCK, M);
+                size_t j_end = std::min(j + BLOCK, N);
+                size_t k_end = std::min(k + BLOCK, K);
+                
+                // Standard i-k-j loop constrained strictly inside the cache block
+                for (size_t ii = i; ii < i_end; ++ii) {
+                    for (size_t kk = k; kk < k_end; ++kk) {
+                        float a_ik = A[ii*K + kk];
+                        
+                        // Let the compiler auto-vectorize this innermost loop
+                        #pragma omp simd
+                        for (size_t jj = j; jj < j_end; ++jj) {
+                            C[ii*N + jj] += a_ik * B[kk*N + jj];
+                        }
+                    }
+                }
             }
+        }
+    }
 
-        return result;
+    return result;
+    
     }
 
     // ── Transposed matmul helpers (used in autograd) ──────────────────────────
@@ -324,28 +347,40 @@ public:
         if (ndim() != 2 || B.ndim() != 2)
             throw std::runtime_error("matmul_A_BT: both tensors must be 2-D");
         if (shape_[1] != B.shape_[1])
-            throw std::runtime_error("matmul_A_BT: inner dimensions must match (K)");
+            throw std::runtime_error("matmul_A_BT: inner dims must match (K)");
 
         size_t M = shape_[0], K = shape_[1], N = B.shape_[0];
-
-        // Step 1: transpose B → BT {K, N}  (one sequential read + write)
-        Tensor BT({K, N}, 0.0f);
-        const float* b  = B.raw_ptr();
-        float*       bt = BT.raw_ptr();
-        for (size_t n = 0; n < N; ++n)
-            for (size_t k = 0; k < K; ++k)
-                bt[k*N + n] = b[n*K + k];
-
-        // Step 2: standard i-k-j matmul on this:{M,K} @ BT:{K,N}
         Tensor result({M, N}, 0.0f);
+
         const float* a = raw_ptr();
-        float*       c = result.raw_ptr();
-        for (size_t m = 0; m < M; ++m)
-            for (size_t k = 0; k < K; ++k) {
-                float a_mk = a[m*K + k];
-                for (size_t n = 0; n < N; ++n)
-                    c[m*N + n] += a_mk * bt[k*N + n];
+        const float* b = B.raw_ptr();
+        float* c = result.raw_ptr();
+
+        const size_t BLOCK = 64;
+
+        #pragma omp parallel for schedule(static) collapse(2)
+        for (size_t i = 0; i < M; i += BLOCK) {
+            for (size_t j = 0; j < N; j += BLOCK) {
+                for (size_t k = 0; k < K; k += BLOCK) {
+                    
+                    size_t i_end = std::min(i + BLOCK, M);
+                    size_t j_end = std::min(j + BLOCK, N);
+                    size_t k_end = std::min(k + BLOCK, K);
+                    
+                    for (size_t ii = i; ii < i_end; ++ii) {
+                        for (size_t kk = k; kk < k_end; ++kk) {
+                            float a_ik = a[ii*K + kk];
+                            
+                            #pragma omp simd
+                            for (size_t jj = j; jj < j_end; ++jj) {
+                                // Notice how we read b[jj*K + kk] instead of a transposed matrix!
+                                c[ii*N + jj] += a_ik * b[jj*K + kk];
+                            }
+                        }
+                    }
+                }
             }
+        }
         return result;
     }
 
@@ -372,13 +407,33 @@ public:
         const float* b = B.raw_ptr();
         float*       c = result.raw_ptr();
 
-        // result[k][n] += this[m][k] * B[m][n]
-        for (size_t m = 0; m < M; ++m)
-            for (size_t k = 0; k < K; ++k) {
-                float a_mk = a[m*K + k];
-                for (size_t n = 0; n < N; ++n)
-                    c[k*N + n] += a_mk * b[m*N + n];
+        const size_t BLOCK = 64;
+
+        // Loop order adjusted for AT_B cache friendliness
+        #pragma omp parallel for schedule(static) collapse(2)
+        for (size_t k = 0; k < K; k += BLOCK) {
+            for (size_t n = 0; n < N; n += BLOCK) {
+                for (size_t m = 0; m < M; m += BLOCK) {
+                    
+                    size_t k_end = std::min(k + BLOCK, K);
+                    size_t n_end = std::min(n + BLOCK, N);
+                    size_t m_end = std::min(m + BLOCK, M);
+                    
+                    for (size_t mm = m; mm < m_end; ++mm) {
+                        for (size_t kk = k; kk < k_end; ++kk) {
+                            // a is conceptually transposed, so we read a[mm*K + kk]
+                            float a_mk = a[mm*K + kk];
+                            
+                            #pragma omp simd
+                            for (size_t nn = n; nn < n_end; ++nn) {
+                                c[kk*N + nn] += a_mk * b[mm*N + nn];
+                            }
+                        }
+                    }
+                }
             }
+        }
+        return result;
         return result;
     }
 
