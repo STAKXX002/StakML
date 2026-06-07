@@ -191,23 +191,22 @@ int main() {
         std::make_shared<nn::Conv2d>(3, 32, 3, 1, 1),
         std::make_shared<nn::ReLU>(),
         std::make_shared<nn::MaxPool2d>(2, 2),
-
         std::make_shared<nn::Conv2d>(32, 64, 3, 1, 1),
         std::make_shared<nn::ReLU>(),
         std::make_shared<nn::MaxPool2d>(2, 2),
-
         std::make_shared<nn::Flatten>(),
-
+        std::make_shared<nn::Dropout>(0.5f),   // ← drop 50% before FC
         std::make_shared<nn::Linear>(64 * 8 * 8, 256),
         std::make_shared<nn::ReLU>(),
+        std::make_shared<nn::Dropout>(0.3f),   // ← drop 30% before classifier
         std::make_shared<nn::Linear>(256, 10),
     });
 
     // ── 4. Optimizer ──────────────────────────────────────────────────────────
     // lr=1e-3 is the standard Adam default.
     // We step down to 1e-4 at epoch 15 (see training loop).
-    optim::Adam opt(model.parameters(), 1e-3f);
-
+    optim::Adam opt(model.parameters(), 1e-3f, 0.9f, 0.999f, 1e-8f, 1e-4f);
+    
     // ── 5. Hyperparameters ────────────────────────────────────────────────────
     constexpr size_t BATCH_SIZE  = 64;   // smaller than MNIST due to 4D tensors
     constexpr size_t EPOCHS      = 20;
@@ -240,19 +239,21 @@ int main() {
         // Shuffle training indices each epoch
         std::shuffle(train_idx.begin(), train_idx.end(), rng);
 
-        // ── A. Train ──────────────────────────────────────────────────────────
-        float total_loss  = 0.0f;
-        int   train_corr  = 0;
+        // ── A. Train ─────────────────────────────────────────────────────────
+        float total_loss = 0.0f;
+        int   train_corr = 0;
+
+        model.set_training(true);   // ← ADD: enable dropout for training
 
         for (size_t step = 0; step < TRAIN_STEPS; ++step) {
             auto [X, Y] = make_batch(train_ds, train_idx, step * BATCH_SIZE, BATCH_SIZE);
 
             opt.zero_grad();
 
-            Tensor logits   = model.forward(X);
-            auto   lp_ptr   = std::make_shared<Tensor>(
-                                  ops::log_softmax(
-                                      std::make_shared<Tensor>(logits)));
+            Tensor logits = model.forward(X);
+            auto   lp_ptr = std::make_shared<Tensor>(
+                                ops::log_softmax(
+                                    std::make_shared<Tensor>(logits)));
 
             float loss = ops::nll_loss(*lp_ptr, Y);
             total_loss += loss;
@@ -263,7 +264,9 @@ int main() {
             opt.step();
         }
 
-        // ── B. Test (no grad) ─────────────────────────────────────────────────
+        // ── B. Test (no grad) ────────────────────────────────────────────────
+        model.set_training(false);  // ← ADD: disable dropout for evaluation
+
         int test_corr = 0;
         for (size_t step = 0; step < TEST_STEPS; ++step) {
             auto [X, Y] = make_batch(test_ds, test_idx, step * BATCH_SIZE, BATCH_SIZE);
@@ -271,6 +274,8 @@ int main() {
             test_corr += static_cast<int>(
                 ops::accuracy(logits, Y) * static_cast<float>(BATCH_SIZE));
         }
+
+        model.set_training(true);   // ← ADD: re-enable for next epoch
 
         auto t1 = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(t1 - t0).count();
