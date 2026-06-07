@@ -90,6 +90,64 @@ struct Sigmoid : public Module {
     }
 };
 
+// ── Dropout ──────────────────────────────────────────────────────────────────
+// Inverted dropout: during training, randomly zeros activations with
+// probability p, and scales survivors by 1/(1-p) so the expected
+// magnitude is unchanged at test time.
+//
+// At inference (training_ = false), forward() is a pure pass-through.
+// You must call set_training(false) before your test loop.
+//
+// BACKWARD: gradient flows through only the positions that weren't
+// zeroed in the forward pass — same mask, same scale.
+//
+struct Dropout : public Module {
+    float p_;           // drop probability (e.g. 0.5)
+    bool  training_;
+    std::mt19937 rng_;
+
+    explicit Dropout(float p = 0.5f)
+        : p_(p), training_(true), rng_(std::random_device{}()) {}
+
+    void set_training(bool mode) { training_ = mode; }
+
+    Tensor forward(std::shared_ptr<Tensor> x) override {
+        if (!training_) return *x;   // test mode: identity
+
+        size_t n = x->num_elements();
+        float scale = 1.0f / (1.0f - p_);
+
+        // Build the mask once — save it for backward
+        auto mask = std::make_shared<std::vector<float>>(n);
+        std::bernoulli_distribution dist(1.0f - p_);
+        const float* xp = x->raw_ptr();
+        float*       mp = mask->data();
+        for (size_t i = 0; i < n; ++i)
+            mp[i] = dist(rng_) ? scale : 0.0f;
+
+        Tensor result(x->shape_);
+        float* rp = result.raw_ptr();
+        for (size_t i = 0; i < n; ++i)
+            rp[i] = xp[i] * mp[i];
+
+        result.op_name_ = "dropout";
+        result.inputs_  = {x};
+        result.grad();
+        auto grad_out = result.grad_;
+
+        result.backward_fn_ = [x, grad_out, mask]() {
+            size_t n = x->num_elements();
+            const float* gop = grad_out->raw_ptr();
+            const float* mp  = mask->data();
+            float*       gxp = x->grad().raw_ptr();
+            for (size_t i = 0; i < n; ++i)
+                gxp[i] += gop[i] * mp[i];  // same mask, same scale
+        };
+
+        return result;
+    }
+};
+
 // ── Sequential ───────────────────────────────────────────────────────────────
 // CONCEPT: chains layers so you can write:
 //
@@ -128,6 +186,14 @@ struct Sequential : public Module {
             all_params.insert(all_params.end(), layer_params.begin(), layer_params.end());
         }
         return all_params;
+    }
+
+    void set_training(bool mode) {
+        for (auto& layer : layers) {
+            // dynamic_cast returns nullptr if the layer isn't a Dropout — safe
+            if (auto* d = dynamic_cast<Dropout*>(layer.get()))
+                d->set_training(mode);
+        }
     }
 };
 
