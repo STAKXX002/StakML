@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 project(StakML VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -10,24 +10,40 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-# ── NEW: Find OpenMP ─────────────────────────────────────────────────────────
+# ── Backends ──────────────────────────────────────────────────────────────────
+# CPU (default): OpenMP blocked matmul
+# GPU (opt-in):  cuBLAS — enable with: cmake .. -DSTAKML_CUDA=ON
+option(STAKML_CUDA "Build with CUDA/cuBLAS matmul backend" OFF)
+
+# ── OpenMP (CPU backend) ──────────────────────────────────────────────────────
 find_package(OpenMP REQUIRED)
 
-# Compiler flags
+# ── Compiler flags ────────────────────────────────────────────────────────────
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra -fsanitize=address,undefined")
-# ── MODIFIED: Added -ffast-math to the global release flags
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math")
 
-# ── Library ──────────────────────────────────────────────────────────────────
-add_library(stakml
-    src/tensor.cpp
-)
-target_include_directories(stakml PUBLIC include)
+# ── Library ───────────────────────────────────────────────────────────────────
+add_library(stakml INTERFACE)
+target_include_directories(stakml INTERFACE include)
+target_link_libraries(stakml INTERFACE OpenMP::OpenMP_CXX)
 
-# ── NEW: Link OpenMP to your core library ────────────────────────────────────
-target_link_libraries(stakml PUBLIC OpenMP::OpenMP_CXX)
+# ── CUDA/cuBLAS backend ───────────────────────────────────────────────────────
+if(STAKML_CUDA)
+    enable_language(CUDA)
+    find_package(CUDAToolkit REQUIRED)
 
-# ── Tests ────────────────────────────────────────────────────────────────────
+    target_compile_definitions(stakml INTERFACE STAKML_CUDA)
+    target_link_libraries(stakml INTERFACE CUDA::cublas CUDA::cudart)
+
+    # Needed so .cuh files can be found when included from .cpp files
+    target_include_directories(stakml INTERFACE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+
+    message(STATUS "StakML: CUDA backend enabled — using cuBLAS for matmul")
+else()
+    message(STATUS "StakML: CPU backend — using OpenMP blocked matmul")
+endif()
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
 add_executable(test_tensor tests/test_tensor.cpp)
 target_link_libraries(test_tensor stakml)
 
@@ -55,7 +71,7 @@ target_link_libraries(stress_test stakml)
 add_executable(test_conv tests/test_conv.cpp)
 target_link_libraries(test_conv stakml)
 
-# ── Examples ─────────────────────────────────────────────────────────────────
+# ── Examples ──────────────────────────────────────────────────────────────────
 add_executable(mnist_mlp examples/mnist_mlp.cpp)
 target_link_libraries(mnist_mlp stakml)
 
@@ -77,7 +93,7 @@ target_link_libraries(full_tournament stakml)
 add_executable(cifar_cnn examples/cifar_cnn.cpp)
 target_link_libraries(cifar_cnn stakml)
 
-# ── Convenience target ───────────────────────────────────────────────────────
+# ── Convenience target ────────────────────────────────────────────────────────
 add_custom_target(run_tests
     COMMAND ./test_tensor
     DEPENDS test_tensor
