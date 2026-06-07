@@ -105,6 +105,7 @@ public:
     float beta1_;   // default 0.9
     float beta2_;   // default 0.999
     float eps_;     // default 1e-8
+    float weight_decay_;  
     size_t t_;      // step counter (starts at 0, incremented each step())
 
     // Per-parameter moment buffers — same shape as each parameter
@@ -112,11 +113,13 @@ public:
     std::vector<std::vector<float>> v_;  // second moments
 
     Adam(const std::vector<std::shared_ptr<Tensor>>& params,
-         float lr     = 1e-3f,
-         float beta1  = 0.9f,
-         float beta2  = 0.999f,
-         float eps    = 1e-8f)
-        : Optimizer(params), lr_(lr), beta1_(beta1), beta2_(beta2), eps_(eps), t_(0)
+        float lr           = 1e-3f,
+        float beta1        = 0.9f,
+        float beta2        = 0.999f,
+        float eps          = 1e-8f,
+        float weight_decay = 0.0f)
+        : Optimizer(params), lr_(lr), beta1_(beta1), beta2_(beta2),
+        eps_(eps), weight_decay_(weight_decay), t_(0)
     {
         // Allocate moment buffers — zero-initialised, same size as each param
         m_.resize(params.size());
@@ -155,7 +158,7 @@ public:
                 float v_hat = vi[j] / bc2;
 
                 // Parameter update
-                w[j] -= lr_ * m_hat / (std::sqrt(v_hat) + eps_);
+                w[j] -= lr_ * (m_hat / (std::sqrt(v_hat) + eps_) + weight_decay_ * w[j]);
             }
         }
     }
