@@ -15,10 +15,11 @@
 
 // ── CUDA backend (opt-in) ─────────────────────────────────────────────────────
 // Define STAKML_CUDA at compile time to swap the three matmul implementations
-// from the OpenMP blocked loop to cuBLAS calls.
+// from the OpenMP blocked loop to cuBLAS calls (Phase 1) or a hand-written
+// tiled SGEMM kernel (Phase 2).
 // Everything else (autograd, layers, loss, optimizer) is completely untouched.
 #ifdef STAKML_CUDA
-#include "cuda_matmul.cuh"
+#include "cuda/matmul.cuh"
 #endif
 
 namespace stakml {

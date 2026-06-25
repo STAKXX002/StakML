@@ -27,7 +27,10 @@ add_library(stakml INTERFACE)
 target_include_directories(stakml INTERFACE include)
 target_link_libraries(stakml INTERFACE OpenMP::OpenMP_CXX)
 
-# ── CUDA/cuBLAS backend ───────────────────────────────────────────────────────
+# ── CUDA backend (opt-in) ─────────────────────────────────────────────────────
+# All CUDA headers live under include/stakml/cuda/.
+# Phase 1: delegates to cuBLAS (requires CUDA::cublas).
+# Phase 2: hand-written tiled SGEMM — cuBLAS dep will be dropped then.
 if(STAKML_CUDA)
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
@@ -35,12 +38,12 @@ if(STAKML_CUDA)
     target_compile_definitions(stakml INTERFACE STAKML_CUDA)
     target_link_libraries(stakml INTERFACE CUDA::cublas CUDA::cudart)
 
-    # Needed so .cuh files can be found when included from .cpp files
+    # Expose CUDA toolkit headers so .cuh files resolve when included from .cpp
     target_include_directories(stakml INTERFACE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
-    message(STATUS "StakML: CUDA backend enabled — using cuBLAS for matmul")
+    message(STATUS "StakML: CUDA backend enabled (Phase 1 — cuBLAS matmul)")
 else()
-    message(STATUS "StakML: CPU backend — using OpenMP blocked matmul")
+    message(STATUS "StakML: CPU backend — OpenMP blocked matmul")
 endif()
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
