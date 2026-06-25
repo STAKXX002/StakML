@@ -30,12 +30,12 @@ __global__ void matmulTiled(const float* A, const float* B, float* C,
         tileA[threadIdx.y][threadIdx.x] = A[row * K + (t * TILE_SIZE + threadIdx.x)];   // A[row][t * TILE_SIZE + threadIdx.x]
         tileB[threadIdx.y][threadIdx.x] = B[(t * TILE_SIZE + threadIdx.y) * N + col];   // B[t * TILE_SIZE + threadIdx.y][col]
 
-        _syncthreads();   // sync before using the tile - why?
+        __syncthreads();   // sync before using the tile - why?
 
         for (int k = 0; k < TILE_SIZE; k++)
             sum += tileA[threadIdx.y][k] * tileB[k][threadIdx.x];
 
-        _syncthreads();   // sync after using the tile - why?
+        __syncthreads();   // sync after using the tile - why?
     }
 
     if (row < M && col < N)
