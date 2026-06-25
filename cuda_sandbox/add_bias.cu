@@ -17,7 +17,7 @@ __global__ void addBias(const float* input, const float* bias, float* output,
                         int rows, int cols) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < rows * cols) {
-        int col = bias[idx % cols];
+        int col = idx % cols;
         output[idx] = input[idx] + bias[col];
     }
 }
