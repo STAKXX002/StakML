@@ -2,6 +2,7 @@
 #include "stakml/tensor.hpp"
 #include "stakml/nn.hpp"
 #include "stakml/serialize.hpp"
+#include "football_dataset.hpp"
 #include <iostream>
 #include <iomanip>
 #include <vector>

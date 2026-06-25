@@ -3,6 +3,7 @@
 #include "stakml/nn.hpp"
 #include "stakml/ops.hpp"
 #include "stakml/serialize.hpp"
+#include "football_dataset.hpp"
 #include <iostream>
 #include <iomanip>
 #include <cmath>

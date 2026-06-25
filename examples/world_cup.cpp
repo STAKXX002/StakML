@@ -5,6 +5,7 @@
 #include "stakml/loss.hpp"
 #include "stakml/optim.hpp"
 #include "stakml/serialize.hpp"
+#include "football_dataset.hpp"
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
