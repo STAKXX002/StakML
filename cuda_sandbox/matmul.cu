@@ -65,13 +65,26 @@ int main() {
     // 2D launch config — each thread handles one (row, col) of C
     dim3 threads(16, 16);        // e.g. 16x16 = 256 threads per block
     dim3 blocks((N + 15)/16, (M + 15)/16);         // enough blocks to cover M and N
+    cudaEvent_t start, stop;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
+
+    CUDA_CHECK(cudaEventRecord(start));
     matmulNaive<<<blocks, threads>>>(d_A, d_B, d_C, M, K, N);
+    CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaEventSynchronize(stop));
+
+    float ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
     CUDA_CHECK(cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost));
 
-    // checkResult is slow (CPU triple loop) — only fine for small M/N/K
-    printf("matmul naive: %s\n", checkResult(h_A, h_B, h_C, M, K, N) ? "PASS" : "FAIL");
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
+
+    // checkResult is slow (CPU triple loop) - only fine for small M/N/K
+    printf("matmul naive: %s  |  time: %.2f ms\n",
+       checkResult(h_A, h_B, h_C, M, K, N) ? "PASS" : "FAIL", ms);
 
     cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
     delete[] h_A; delete[] h_B; delete[] h_C;
