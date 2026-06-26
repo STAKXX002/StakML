@@ -19,7 +19,7 @@ __global__ void matmulNaive(const float* A, const float* B, float* C,
     if (row < M && col < N) {
         float sum = 0.0f;
         for (int k = 0; k < K; k++) {
-            sum += A[row * K + k] * B[k * K + col];   // A[row, k] * B[k, col] - think row-major indexing
+            sum += A[row * K + k] * B[k * N + col];   // A[row, k] * B[k, col] - think row-major indexing
         }
         C[row * N + col] = sum;
     }
@@ -43,7 +43,7 @@ bool checkResult(const float* A, const float* B, const float* C,
 }
 
 int main() {
-    int M = 512, K = 512, N = 512;
+    int M = 512, K = 256, N = 128;
     size_t bytes_A = M * K * sizeof(float);
     size_t bytes_B = K * N * sizeof(float);
     size_t bytes_C = M * N * sizeof(float);
