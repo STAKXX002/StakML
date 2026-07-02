@@ -74,6 +74,9 @@ target_link_libraries(stress_test stakml)
 add_executable(test_conv tests/test_conv.cpp)
 target_link_libraries(test_conv stakml)
 
+add_executable(test_serialize tests/test_serialize.cpp)
+target_link_libraries(test_serialize stakml)
+
 # ── Examples ──────────────────────────────────────────────────────────────────
 add_executable(mnist_mlp examples/mnist_mlp.cpp)
 target_link_libraries(mnist_mlp stakml)
