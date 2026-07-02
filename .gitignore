@@ -18,7 +18,7 @@ Makefile
 *.so
 *.out
 
-# Downloaded datasets (we'll add these in week 4)
+# Downloaded datasets (add these in week 4)
 data/
 
 # IDE / editor junk
