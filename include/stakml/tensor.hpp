@@ -12,6 +12,7 @@
 #include <sstream>
 #include <iomanip>
 #include <unordered_set>
+#include <algorithm>
 
 // ── CUDA backend (opt-in) ─────────────────────────────────────────────────────
 // Define STAKML_CUDA at compile time to swap the three matmul implementations
