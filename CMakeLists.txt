@@ -20,6 +20,27 @@ option(STAKML_VULKAN "Build with Vulkan compute backend" OFF)
 # ── OpenMP (CPU backend) ──────────────────────────────────────────────────────
 find_package(OpenMP REQUIRED)
 
+# ── Vulkan (opt-in) ────────────────────────────────────────────────────────────
+# Gated the same way as STAKML_CUDA above: consumers who only want the CPU
+# backend (e.g. StakMesh's FetchContent pull) should never need the Vulkan
+# SDK or glslangValidator installed just to configure.
+if(STAKML_VULKAN)
+    find_package(Vulkan REQUIRED)
+    find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED)
+
+    # ── Vulkan shader compilation ───────────────────────────────────────────
+    add_custom_command(
+        OUTPUT ${CMAKE_BINARY_DIR}/shaders/vecadd.spv
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
+        COMMAND ${GLSLANG_VALIDATOR} -V ${CMAKE_SOURCE_DIR}/src/backend/vulkan/shaders/vecadd.comp -o ${CMAKE_BINARY_DIR}/shaders/vecadd.spv
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/backend/vulkan/shaders/vecadd.comp
+        COMMENT "Compiling vecadd.comp to SPIR-V"
+    )
+    add_custom_target(vecadd_shader DEPENDS ${CMAKE_BINARY_DIR}/shaders/vecadd.spv)
+
+    message(STATUS "StakML: Vulkan backend enabled")
+endif()
+
 # ── Compiler flags ────────────────────────────────────────────────────────────
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra -fsanitize=address,undefined")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math")
@@ -46,31 +67,6 @@ if(STAKML_CUDA)
     message(STATUS "StakML: CUDA backend enabled (Phase 1 — cuBLAS matmul)")
 else()
     message(STATUS "StakML: CPU backend — OpenMP blocked matmul")
-endif()
-
-# ── Vulkan backend (opt-in) ────────────────────────────────────────────────────
-# Compute-shader backend for non-Nvidia GPUs (developed/tested on AMD Radeon 780M / RADV).
-if(STAKML_VULKAN)
-    find_package(Vulkan REQUIRED)
-    find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED)
-
-    add_custom_command(
-        OUTPUT ${CMAKE_BINARY_DIR}/shaders/vecadd.spv
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
-        COMMAND ${GLSLANG_VALIDATOR} -V ${CMAKE_SOURCE_DIR}/src/backend/vulkan/shaders/vecadd.comp -o ${CMAKE_BINARY_DIR}/shaders/vecadd.spv
-        DEPENDS ${CMAKE_SOURCE_DIR}/src/backend/vulkan/shaders/vecadd.comp
-        COMMENT "Compiling vecadd.comp to SPIR-V"
-    )
-    add_custom_target(vecadd_shader DEPENDS ${CMAKE_BINARY_DIR}/shaders/vecadd.spv)
-
-    add_executable(test_vulkan tests/test_vulkan.cpp
-        src/backend/vulkan/vulkan_context.cpp
-        src/backend/vulkan/vulkan_buffer.cpp)
-    target_include_directories(test_vulkan PRIVATE src/backend/vulkan)
-    target_link_libraries(test_vulkan PRIVATE stakml Vulkan::Vulkan)
-    add_dependencies(test_vulkan vecadd_shader)
-
-    message(STATUS "StakML: Vulkan backend enabled")
 endif()
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -103,6 +99,15 @@ target_link_libraries(test_conv stakml)
 
 add_executable(test_serialize tests/test_serialize.cpp)
 target_link_libraries(test_serialize stakml)
+
+if(STAKML_VULKAN)
+    add_executable(test_vulkan tests/test_vulkan.cpp
+        src/backend/vulkan/vulkan_context.cpp
+        src/backend/vulkan/vulkan_buffer.cpp)
+    target_include_directories(test_vulkan PRIVATE src/backend/vulkan)
+    target_link_libraries(test_vulkan PRIVATE stakml Vulkan::Vulkan)
+    add_dependencies(test_vulkan vecadd_shader)
+endif()
 
 # ── Examples ──────────────────────────────────────────────────────────────────
 add_executable(mnist_mlp examples/mnist_mlp.cpp)
