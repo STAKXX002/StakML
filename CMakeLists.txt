@@ -12,8 +12,8 @@ endif()
 
 # ── Backends ──────────────────────────────────────────────────────────────────
 # CPU (default): OpenMP blocked matmul
-# GPU (opt-in):  cuBLAS   — enable with: cmake .. -DSTAKML_CUDA=ON
-# GPU (opt-in):  Vulkan   — enable with: cmake .. -DSTAKML_VULKAN=ON
+# GPU (opt-in):  cuBLAS   - enable with: cmake .. -DSTAKML_CUDA=ON
+# GPU (opt-in):  Vulkan   - enable with: cmake .. -DSTAKML_VULKAN=ON
 option(STAKML_CUDA "Build with CUDA/cuBLAS matmul backend" OFF)
 option(STAKML_VULKAN "Build with Vulkan compute backend" OFF)
 
@@ -38,6 +38,15 @@ if(STAKML_VULKAN)
     )
     add_custom_target(vecadd_shader DEPENDS ${CMAKE_BINARY_DIR}/shaders/vecadd.spv)
 
+    add_custom_command(
+        OUTPUT ${CMAKE_BINARY_DIR}/shaders/matmul.spv
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
+        COMMAND ${GLSLANG_VALIDATOR} -V ${CMAKE_SOURCE_DIR}/src/backend/vulkan/shaders/matmul.comp -o ${CMAKE_BINARY_DIR}/shaders/matmul.spv
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/backend/vulkan/shaders/matmul.comp
+        COMMENT "Compiling matmul.comp to SPIR-V"
+    )
+    add_custom_target(matmul_shader DEPENDS ${CMAKE_BINARY_DIR}/shaders/matmul.spv)
+
     message(STATUS "StakML: Vulkan backend enabled")
 endif()
 
@@ -53,7 +62,7 @@ target_link_libraries(stakml INTERFACE OpenMP::OpenMP_CXX)
 # ── CUDA backend (opt-in) ─────────────────────────────────────────────────────
 # All CUDA headers live under include/stakml/cuda/.
 # Phase 1: delegates to cuBLAS (requires CUDA::cublas).
-# Phase 2: hand-written tiled SGEMM — cuBLAS dep will be dropped then.
+# Phase 2: hand-written tiled SGEMM - cuBLAS dep will be dropped then.
 if(STAKML_CUDA)
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
@@ -64,9 +73,9 @@ if(STAKML_CUDA)
     # Expose CUDA toolkit headers so .cuh files resolve when included from .cpp
     target_include_directories(stakml INTERFACE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
-    message(STATUS "StakML: CUDA backend enabled (Phase 1 — cuBLAS matmul)")
+    message(STATUS "StakML: CUDA backend enabled (Phase 1 - cuBLAS matmul)")
 else()
-    message(STATUS "StakML: CPU backend — OpenMP blocked matmul")
+    message(STATUS "StakML: CPU backend - OpenMP blocked matmul")
 endif()
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -103,10 +112,11 @@ target_link_libraries(test_serialize stakml)
 if(STAKML_VULKAN)
     add_executable(test_vulkan tests/test_vulkan.cpp
         src/backend/vulkan/vulkan_context.cpp
-        src/backend/vulkan/vulkan_buffer.cpp)
+        src/backend/vulkan/vulkan_buffer.cpp
+        src/backend/vulkan/vulkan_matmul.cpp)
     target_include_directories(test_vulkan PRIVATE src/backend/vulkan)
     target_link_libraries(test_vulkan PRIVATE stakml Vulkan::Vulkan)
-    add_dependencies(test_vulkan vecadd_shader)
+    add_dependencies(test_vulkan vecadd_shader matmul_shader)
 endif()
 
 # ── Examples ──────────────────────────────────────────────────────────────────
