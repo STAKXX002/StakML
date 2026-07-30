@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 project(StakML VERSION 0.1.0 LANGUAGES CXX)
+enable_testing()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -117,6 +118,22 @@ if(STAKML_VULKAN)
     target_include_directories(test_vulkan PRIVATE src/backend/vulkan)
     target_link_libraries(test_vulkan PRIVATE stakml Vulkan::Vulkan)
     add_dependencies(test_vulkan vecadd_shader matmul_shader)
+endif()
+
+# ── CTest registration ─────────────────────────────────────────────────────────
+add_test(NAME test_tensor COMMAND test_tensor)
+add_test(NAME test_graph COMMAND test_graph)
+add_test(NAME test_backward COMMAND test_backward)
+add_test(NAME test_loss COMMAND test_loss)
+add_test(NAME test_optim COMMAND test_optim)
+add_test(NAME test_conv COMMAND test_conv)
+add_test(NAME test_opts COMMAND test_opts)
+add_test(NAME test_serialize COMMAND test_serialize)
+add_test(NAME stress_test COMMAND stress_test)
+
+if(STAKML_VULKAN)
+    add_test(NAME test_vulkan COMMAND test_vulkan
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
 # ── Examples ──────────────────────────────────────────────────────────────────
