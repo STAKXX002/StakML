@@ -25,9 +25,4 @@ jobs:
         run: cmake --build build -j$(nproc)
 
       - name: Run tests
-        run: |
-          cd build
-          for t in test_tensor test_backward test_graph test_loss test_optim test_conv test_opts test_serialize; do
-            echo "=== $t ==="
-            ./$t
-          done
+        run: ctest --test-dir build --output-on-failure
