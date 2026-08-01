@@ -148,32 +148,22 @@ void VulkanMatmul::ensureBuffers(VkDeviceSize sizeA, VkDeviceSize sizeB, VkDevic
     }
     if (grew) updateDescriptorSet();
 }
+void VulkanMatmul::updateDescriptorSet() {
     std::array<VkDescriptorBufferInfo, 3> bufferInfos{};
-    bufferInfos[0] = { bufA.handle(), 0, VK_WHOLE_SIZE };
-    bufferInfos[1] = { bufB.handle(), 0, VK_WHOLE_SIZE };
-    bufferInfos[2] = { bufC.handle(), 0, VK_WHOLE_SIZE };
-
+    bufferInfos[0] = { bufA_->handle(), 0, VK_WHOLE_SIZE };
+    bufferInfos[1] = { bufB_->handle(), 0, VK_WHOLE_SIZE };
+    bufferInfos[2] = { bufC_->handle(), 0, VK_WHOLE_SIZE };
     std::array<VkWriteDescriptorSet, 3> writes{};
     for (uint32_t i = 0; i < 3; ++i) {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[i].dstSet = descriptorSet;
+        writes[i].dstSet = descriptorSet_;
         writes[i].dstBinding = i;
         writes[i].descriptorCount = 1;
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[i].pBufferInfo = &bufferInfos[i];
     }
     vkUpdateDescriptorSets(ctx_.device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-
-    VkCommandBufferAllocateInfo cmdAllocInfo{};
-    cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmdAllocInfo.commandPool = commandPool_;
-    cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAllocInfo.commandBufferCount = 1;
-
-    VkCommandBuffer cmd;
-    if (vkAllocateCommandBuffers(ctx_.device(), &cmdAllocInfo, &cmd) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate command buffer");
-
+}
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
