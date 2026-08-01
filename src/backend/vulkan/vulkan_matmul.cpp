@@ -129,6 +129,25 @@ void VulkanMatmul::createCommandBuffer() {
     if (vkAllocateCommandBuffers(ctx_.device(), &cmdAllocInfo, &commandBuffer_) != VK_SUCCESS)
         throw std::runtime_error("Failed to allocate command buffer");
 }
+
+// ── Single-call path (unchanged behavior from before) ─────────────────────
+
+void VulkanMatmul::ensureBuffers(VkDeviceSize sizeA, VkDeviceSize sizeB, VkDeviceSize sizeC) {
+    bool grew = false;
+    if (sizeA > capacityA_) {
+        bufA_ = std::make_unique<VulkanBuffer>(ctx_.device(), ctx_.physicalDevice(), sizeA, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        capacityA_ = sizeA; grew = true;
+    }
+    if (sizeB > capacityB_) {
+        bufB_ = std::make_unique<VulkanBuffer>(ctx_.device(), ctx_.physicalDevice(), sizeB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        capacityB_ = sizeB; grew = true;
+    }
+    if (sizeC > capacityC_) {
+        bufC_ = std::make_unique<VulkanBuffer>(ctx_.device(), ctx_.physicalDevice(), sizeC, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        capacityC_ = sizeC; grew = true;
+    }
+    if (grew) updateDescriptorSet();
+}
     std::array<VkDescriptorBufferInfo, 3> bufferInfos{};
     bufferInfos[0] = { bufA.handle(), 0, VK_WHOLE_SIZE };
     bufferInfos[1] = { bufB.handle(), 0, VK_WHOLE_SIZE };
