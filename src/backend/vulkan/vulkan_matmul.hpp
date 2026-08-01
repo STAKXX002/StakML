@@ -20,9 +20,19 @@ public:
     explicit VulkanMatmul(VulkanContext& ctx);
     ~VulkanMatmul();
 
-    // A: M x K, B: K x N, C: M x N — all row-major, C pre-allocated by caller.
+    // Single matmul - one submission, one wait. Same as before.
     void run(const float* A, const float* B, float* C,
              size_t M, size_t K, size_t N);
+
+    // Batched: records ALL jobs into ONE command buffer, submits ONCE,
+    // waits ONCE. Each job gets its own buffer trio (A/B/C) — distinct
+    // buffers per job, not the shared bufA_/bufB_/bufC_ used by run() -
+    // because dispatches within one command buffer without barriers
+    // between them may execute concurrently on the GPU, so jobs sharing
+    // a buffer would race. This is the experiment for whether batching
+    // amortizes the fixed per-submission stall that dominates at small
+    // matmul sizes.
+    void runBatch(const std::vector<MatmulJob>& jobs);
 
 private:
     void createDescriptorSetLayout();
