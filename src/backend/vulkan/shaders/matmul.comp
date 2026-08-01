@@ -1,6 +1,15 @@
 #version 450
 
-layout(local_size_x = 16, local_size_y = 16) in;
+// Tile size matches the workgroup size below — each workgroup cooperatively
+// loads a 16x16 tile of A and a 16x16 tile of B into shared memory once,
+// then every thread in the group reuses those same 16x16 values TILE_SIZE
+// times instead of re-reading them from global memory per-thread.
+// This is the same fix as matmul_tiled.cu's shared-memory blocking —
+// it's what cuts the global memory traffic that caused the driver hang
+// on the naive version at 4096x4096.
+#define TILE_SIZE 16
+
+layout(local_size_x = TILE_SIZE, local_size_y = TILE_SIZE) in;
 
 layout(set = 0, binding = 0) readonly buffer BufA { float A[]; };
 layout(set = 0, binding = 1) readonly buffer BufB { float B[]; };
@@ -12,15 +21,58 @@ layout(push_constant) uniform PushConstants {
     uint N;
 } pc;
 
-void main() {
-    uint row = gl_GlobalInvocationID.y;
-    uint col = gl_GlobalInvocationID.x;
+// Shared (workgroup-local) memory — same purpose as __shared__ in CUDA.
+// Every invocation in this 16x16 workgroup sees the same tileA/tileB.
+shared float tileA[TILE_SIZE][TILE_SIZE];
+shared float tileB[TILE_SIZE][TILE_SIZE];
 
-    if (row >= pc.M || col >= pc.N) return;
+void main() {
+    uint row = gl_GlobalInvocationID.y;      // this thread's output row (0..M-1)
+    uint col = gl_GlobalInvocationID.x;      // this thread's output col (0..N-1)
+
+    uint localRow = gl_LocalInvocationID.y;  // row within the 16x16 tile
+    uint localCol = gl_LocalInvocationID.x;  // col within the 16x16 tile
 
     float sum = 0.0;
-    for (uint k = 0; k < pc.K; ++k) {
-        sum += A[row * pc.K + k] * B[k * pc.N + col];
+
+    // Number of tiles needed to cover the K dimension
+    uint numTiles = (pc.K + TILE_SIZE - 1) / TILE_SIZE;
+
+    for (uint t = 0; t < numTiles; ++t) {
+        // ── Cooperative load: each thread loads exactly ONE element of A
+        // and ONE element of B into shared memory, not the full row/col.
+        uint aCol = t * TILE_SIZE + localCol;   // column of A this thread loads
+        uint bRow = t * TILE_SIZE + localRow;   // row of B this thread loads
+
+        // Bounds check: pad with 0 when the tile overhangs the matrix edge
+        // (happens when M, K, or N isn't a multiple of TILE_SIZE).
+        if (row < pc.M && aCol < pc.K)
+            tileA[localRow][localCol] = A[row * pc.K + aCol];
+        else
+            tileA[localRow][localCol] = 0.0;
+
+        if (bRow < pc.K && col < pc.N)
+            tileB[localRow][localCol] = B[bRow * pc.N + col];
+        else
+            tileB[localRow][localCol] = 0.0;
+
+        // Wait for every thread in the workgroup to finish loading before
+        // any thread starts reading — same purpose as __syncthreads() in
+        // matmul_tiled.cu.
+        barrier();
+
+        // Accumulate this tile's contribution using ONLY shared memory —
+        // no global memory access in this inner loop.
+        for (uint k = 0; k < TILE_SIZE; ++k) {
+            sum += tileA[localRow][k] * tileB[k][localCol];
+        }
+
+        // Wait for every thread to finish reading tileA/tileB before the
+        // next iteration overwrites them with the next tile.
+        barrier();
     }
-    C[row * pc.N + col] = sum;
+
+    if (row < pc.M && col < pc.N) {
+        C[row * pc.N + col] = sum;
+    }
 }
