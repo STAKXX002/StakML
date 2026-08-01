@@ -324,10 +324,13 @@ void VulkanMatmul::runBatch(const std::vector<MatmulJob>& jobs) {
     vkQueueSubmit(ctx_.computeQueue(), 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(ctx_.computeQueue());
 
-    vkFreeCommandBuffers(ctx_.device(), commandPool_, 1, &cmd);
-    vkFreeDescriptorSets(ctx_.device(), descriptorPool_, 1, &descriptorSet);
-
-    mapped = bufC.map(); std::memcpy(C, mapped, sizeC); bufC.unmap();
+    // Read back every job's result.
+    for (size_t i = 0; i < jobs.size(); ++i) {
+        VkDeviceSize sizeC = jobs[i].M * jobs[i].N * sizeof(float);
+        void* mapped = batchBufC_[i]->map();
+        std::memcpy(jobs[i].C, mapped, sizeC);
+        batchBufC_[i]->unmap();
+    }
 }
 
 } // namespace stakml::vulkan
