@@ -120,29 +120,15 @@ void VulkanMatmul::createPipeline() {
         throw std::runtime_error("Failed to create compute pipeline");
 }
 
-void VulkanMatmul::run(const float* A, const float* B, float* C,
-                        size_t M, size_t K, size_t N) {
-    VkDeviceSize sizeA = M * K * sizeof(float);
-    VkDeviceSize sizeB = K * N * sizeof(float);
-    VkDeviceSize sizeC = M * N * sizeof(float);
-
-    VulkanBuffer bufA(ctx_.device(), ctx_.physicalDevice(), sizeA, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    VulkanBuffer bufB(ctx_.device(), ctx_.physicalDevice(), sizeB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    VulkanBuffer bufC(ctx_.device(), ctx_.physicalDevice(), sizeC, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-
-    void* mapped = bufA.map(); std::memcpy(mapped, A, sizeA); bufA.unmap();
-    mapped = bufB.map(); std::memcpy(mapped, B, sizeB); bufB.unmap();
-
-    VkDescriptorSetAllocateInfo dsAllocInfo{};
-    dsAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAllocInfo.descriptorPool = descriptorPool_;
-    dsAllocInfo.descriptorSetCount = 1;
-    dsAllocInfo.pSetLayouts = &dsLayout_;
-
-    VkDescriptorSet descriptorSet;
-    if (vkAllocateDescriptorSets(ctx_.device(), &dsAllocInfo, &descriptorSet) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate descriptor set");
-
+void VulkanMatmul::createCommandBuffer() {
+    VkCommandBufferAllocateInfo cmdAllocInfo{};
+    cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmdAllocInfo.commandPool = commandPool_;
+    cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAllocInfo.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(ctx_.device(), &cmdAllocInfo, &commandBuffer_) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate command buffer");
+}
     std::array<VkDescriptorBufferInfo, 3> bufferInfos{};
     bufferInfos[0] = { bufA.handle(), 0, VK_WHOLE_SIZE };
     bufferInfos[1] = { bufB.handle(), 0, VK_WHOLE_SIZE };
