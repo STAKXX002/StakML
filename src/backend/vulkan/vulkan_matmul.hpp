@@ -1,6 +1,9 @@
 #pragma once
 #include "vulkan_context.hpp"
+#include "vulkan_buffer.hpp"
 #include <cstddef>
+#include <memory>
+#include <vector>
 
 namespace stakml::vulkan {
 
