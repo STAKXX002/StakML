@@ -49,11 +49,22 @@ VulkanMatmul::VulkanMatmul(VulkanContext& ctx) : ctx_(ctx) {
     dpoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     if (vkCreateDescriptorPool(ctx_.device(), &dpoolInfo, nullptr, &descriptorPool_) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor pool");
+
+    VkDescriptorSetAllocateInfo dsAllocInfo{};
+    dsAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAllocInfo.descriptorPool = descriptorPool_;
+    dsAllocInfo.descriptorSetCount = 1;
+    dsAllocInfo.pSetLayouts = &dsLayout_;
+    if (vkAllocateDescriptorSets(ctx_.device(), &dsAllocInfo, &descriptorSet_) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate descriptor set");
+
+    createCommandBuffer();
 }
 
 VulkanMatmul::~VulkanMatmul() {
     if (commandPool_) vkDestroyCommandPool(ctx_.device(), commandPool_, nullptr);
     if (descriptorPool_) vkDestroyDescriptorPool(ctx_.device(), descriptorPool_, nullptr);
+    if (batchDescriptorPool_) vkDestroyDescriptorPool(ctx_.device(), batchDescriptorPool_, nullptr);
     if (pipeline_) vkDestroyPipeline(ctx_.device(), pipeline_, nullptr);
     if (pipelineLayout_) vkDestroyPipelineLayout(ctx_.device(), pipelineLayout_, nullptr);
     if (dsLayout_) vkDestroyDescriptorSetLayout(ctx_.device(), dsLayout_, nullptr);
