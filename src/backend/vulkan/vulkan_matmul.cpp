@@ -148,6 +148,7 @@ void VulkanMatmul::ensureBuffers(VkDeviceSize sizeA, VkDeviceSize sizeB, VkDevic
     }
     if (grew) updateDescriptorSet();
 }
+
 void VulkanMatmul::updateDescriptorSet() {
     std::array<VkDescriptorBufferInfo, 3> bufferInfos{};
     bufferInfos[0] = { bufA_->handle(), 0, VK_WHOLE_SIZE };
@@ -164,6 +165,18 @@ void VulkanMatmul::updateDescriptorSet() {
     }
     vkUpdateDescriptorSets(ctx_.device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
+
+void VulkanMatmul::run(const float* A, const float* B, float* C,
+                        size_t M, size_t K, size_t N) {
+    VkDeviceSize sizeA = M * K * sizeof(float);
+    VkDeviceSize sizeB = K * N * sizeof(float);
+    VkDeviceSize sizeC = M * N * sizeof(float);
+    ensureBuffers(sizeA, sizeB, sizeC);
+
+    void* mapped = bufA_->map(); std::memcpy(mapped, A, sizeA); bufA_->unmap();
+    mapped = bufB_->map(); std::memcpy(mapped, B, sizeB); bufB_->unmap();
+
+    vkResetCommandBuffer(commandBuffer_, 0);
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
