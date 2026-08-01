@@ -201,6 +201,52 @@ void VulkanMatmul::run(const float* A, const float* B, float* C,
 
     mapped = bufC_->map(); std::memcpy(C, mapped, sizeC); bufC_->unmap();
 }
+
+// ── Batch path — the actual experiment ─────────────────────────────────────
+
+void VulkanMatmul::ensureBatchCapacity(size_t count) {
+    // Descriptor pool: Vulkan pools can't grow in place, so if we need
+    // more sets than the pool currently supports, destroy and recreate
+    // it sized for `count`. This only happens when a batch is larger
+    // than any previous one.
+    if (count > batchPoolCapacity_) {
+        if (batchDescriptorPool_) vkDestroyDescriptorPool(ctx_.device(), batchDescriptorPool_, nullptr);
+
+        VkDescriptorPoolSize poolSize{};
+        poolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSize.descriptorCount = static_cast<uint32_t>(count * 3);
+
+        VkDescriptorPoolCreateInfo dpoolInfo{};
+        dpoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        dpoolInfo.poolSizeCount = 1;
+        dpoolInfo.pPoolSizes = &poolSize;
+        dpoolInfo.maxSets = static_cast<uint32_t>(count);
+        if (vkCreateDescriptorPool(ctx_.device(), &dpoolInfo, nullptr, &batchDescriptorPool_) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create batch descriptor pool");
+
+        std::vector<VkDescriptorSetLayout> layouts(count, dsLayout_);
+        batchSets_.assign(count, VK_NULL_HANDLE);
+
+        VkDescriptorSetAllocateInfo dsAllocInfo{};
+        dsAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dsAllocInfo.descriptorPool = batchDescriptorPool_;
+        dsAllocInfo.descriptorSetCount = static_cast<uint32_t>(count);
+        dsAllocInfo.pSetLayouts = layouts.data();
+        if (vkAllocateDescriptorSets(ctx_.device(), &dsAllocInfo, batchSets_.data()) != VK_SUCCESS)
+            throw std::runtime_error("Failed to allocate batch descriptor sets");
+
+        batchPoolCapacity_ = count;
+    }
+
+    if (batchBufA_.size() < count) {
+        batchBufA_.resize(count);
+        batchBufB_.resize(count);
+        batchBufC_.resize(count);
+        batchCapA_.resize(count, 0);
+        batchCapB_.resize(count, 0);
+        batchCapC_.resize(count, 0);
+    }
+}
     vkQueueSubmit(ctx_.computeQueue(), 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(ctx_.computeQueue());
 
