@@ -247,6 +247,80 @@ void VulkanMatmul::ensureBatchCapacity(size_t count) {
         batchCapC_.resize(count, 0);
     }
 }
+
+void VulkanMatmul::runBatch(const std::vector<MatmulJob>& jobs) {
+    if (jobs.empty()) return;
+    ensureBatchCapacity(jobs.size());
+
+    // Upload phase — grow per-slot buffers if needed, upload A/B, rebind
+    // that slot's descriptor set to the (possibly new) buffer handles.
+    for (size_t i = 0; i < jobs.size(); ++i) {
+        const auto& job = jobs[i];
+        VkDeviceSize sizeA = job.M * job.K * sizeof(float);
+        VkDeviceSize sizeB = job.K * job.N * sizeof(float);
+        VkDeviceSize sizeC = job.M * job.N * sizeof(float);
+
+        bool grew = false;
+        if (sizeA > batchCapA_[i]) {
+            batchBufA_[i] = std::make_unique<VulkanBuffer>(ctx_.device(), ctx_.physicalDevice(), sizeA, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            batchCapA_[i] = sizeA; grew = true;
+        }
+        if (sizeB > batchCapB_[i]) {
+            batchBufB_[i] = std::make_unique<VulkanBuffer>(ctx_.device(), ctx_.physicalDevice(), sizeB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            batchCapB_[i] = sizeB; grew = true;
+        }
+        if (sizeC > batchCapC_[i]) {
+            batchBufC_[i] = std::make_unique<VulkanBuffer>(ctx_.device(), ctx_.physicalDevice(), sizeC, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            batchCapC_[i] = sizeC; grew = true;
+        }
+
+        if (grew) {
+            std::array<VkDescriptorBufferInfo, 3> bufferInfos{};
+            bufferInfos[0] = { batchBufA_[i]->handle(), 0, VK_WHOLE_SIZE };
+            bufferInfos[1] = { batchBufB_[i]->handle(), 0, VK_WHOLE_SIZE };
+            bufferInfos[2] = { batchBufC_[i]->handle(), 0, VK_WHOLE_SIZE };
+            std::array<VkWriteDescriptorSet, 3> writes{};
+            for (uint32_t b = 0; b < 3; ++b) {
+                writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[b].dstSet = batchSets_[i];
+                writes[b].dstBinding = b;
+                writes[b].descriptorCount = 1;
+                writes[b].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[b].pBufferInfo = &bufferInfos[b];
+            }
+            vkUpdateDescriptorSets(ctx_.device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        }
+
+        void* mapped = batchBufA_[i]->map(); std::memcpy(mapped, job.A, sizeA); batchBufA_[i]->unmap();
+        mapped = batchBufB_[i]->map(); std::memcpy(mapped, job.B, sizeB); batchBufB_[i]->unmap();
+    }
+
+    // Record ALL dispatches into ONE command buffer.
+    vkResetCommandBuffer(commandBuffer_, 0);
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(commandBuffer_, &beginInfo);
+    vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
+
+    for (size_t i = 0; i < jobs.size(); ++i) {
+        const auto& job = jobs[i];
+        vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout_,
+                                 0, 1, &batchSets_[i], 0, nullptr);
+        uint32_t pushConsts[3] = { (uint32_t)job.M, (uint32_t)job.K, (uint32_t)job.N };
+        vkCmdPushConstants(commandBuffer_, pipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConsts), pushConsts);
+        uint32_t groupsX = ((uint32_t)job.N + 15) / 16;
+        uint32_t groupsY = ((uint32_t)job.M + 15) / 16;
+        vkCmdDispatch(commandBuffer_, groupsX, groupsY, 1);
+    }
+
+    vkEndCommandBuffer(commandBuffer_);
+
+    // ONE submit, ONE wait for the entire batch.
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer_;
     vkQueueSubmit(ctx_.computeQueue(), 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(ctx_.computeQueue());
 
