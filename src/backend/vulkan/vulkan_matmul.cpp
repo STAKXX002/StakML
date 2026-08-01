@@ -180,27 +180,27 @@ void VulkanMatmul::run(const float* A, const float* B, float* C,
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    vkBeginCommandBuffer(commandBuffer_, &beginInfo);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout_,
-                             0, 1, &descriptorSet, 0, nullptr);
-
+    vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
+    vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout_,
+                             0, 1, &descriptorSet_, 0, nullptr);
     uint32_t pushConsts[3] = { (uint32_t)M, (uint32_t)K, (uint32_t)N };
-    vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT,
-                        0, sizeof(pushConsts), pushConsts);
-
+    vkCmdPushConstants(commandBuffer_, pipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConsts), pushConsts);
     uint32_t groupsX = ((uint32_t)N + 15) / 16;
     uint32_t groupsY = ((uint32_t)M + 15) / 16;
-    vkCmdDispatch(cmd, groupsX, groupsY, 1);
-
-    vkEndCommandBuffer(cmd);
+    vkCmdDispatch(commandBuffer_, groupsX, groupsY, 1);
+    vkEndCommandBuffer(commandBuffer_);
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
+    submitInfo.pCommandBuffers = &commandBuffer_;
+    vkQueueSubmit(ctx_.computeQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(ctx_.computeQueue());
 
+    mapped = bufC_->map(); std::memcpy(C, mapped, sizeC); bufC_->unmap();
+}
     vkQueueSubmit(ctx_.computeQueue(), 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(ctx_.computeQueue());
 
