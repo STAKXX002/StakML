@@ -79,6 +79,19 @@ else()
     message(STATUS "StakML: CPU backend - OpenMP blocked matmul")
 endif()
 
+if(STAKML_VULKAN)
+    add_library(stakml_vulkan STATIC
+        src/backend/vulkan/vulkan_context.cpp
+        src/backend/vulkan/vulkan_buffer.cpp
+        src/backend/vulkan/vulkan_matmul.cpp)
+    target_include_directories(stakml_vulkan PUBLIC src/backend/vulkan)
+    target_link_libraries(stakml_vulkan PUBLIC Vulkan::Vulkan)
+    add_dependencies(stakml_vulkan vecadd_shader matmul_shader)   # ← new line
+
+    target_compile_definitions(stakml INTERFACE STAKML_VULKAN)
+    target_link_libraries(stakml INTERFACE stakml_vulkan)
+endif()
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 add_executable(test_tensor tests/test_tensor.cpp)
 target_link_libraries(test_tensor stakml)
