@@ -37,6 +37,13 @@ public:
 private:
     void createDescriptorSetLayout();
     void createPipeline();
+    void createCommandBuffer();
+    void ensureBuffers(VkDeviceSize sizeA, VkDeviceSize sizeB, VkDeviceSize sizeC);
+    void updateDescriptorSet();
+
+    // Grows the per-job buffer/descriptor-set pools to at least `count`
+    // slots, allocating new ones as needed. Existing slots are untouched.
+    void ensureBatchCapacity(size_t count);
 
     VulkanContext& ctx_;
 
