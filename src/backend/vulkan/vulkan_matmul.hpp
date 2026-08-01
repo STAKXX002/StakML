@@ -51,8 +51,23 @@ private:
     VkDescriptorSetLayout dsLayout_     = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_    = VK_NULL_HANDLE;
     VkPipeline pipeline_                = VK_NULL_HANDLE;
-    VkDescriptorPool descriptorPool_    = VK_NULL_HANDLE;
     VkCommandPool commandPool_          = VK_NULL_HANDLE;
+    VkCommandBuffer commandBuffer_      = VK_NULL_HANDLE;
+
+    // ── Single-call path (run()) — unchanged from before ──────────────
+    VkDescriptorPool descriptorPool_    = VK_NULL_HANDLE;
+    VkDescriptorSet descriptorSet_      = VK_NULL_HANDLE;
+    std::unique_ptr<VulkanBuffer> bufA_;
+    std::unique_ptr<VulkanBuffer> bufB_;
+    std::unique_ptr<VulkanBuffer> bufC_;
+    VkDeviceSize capacityA_ = 0, capacityB_ = 0, capacityC_ = 0;
+
+    // ── Batch path (runBatch()) — separate pool, grows to jobs.size() ──
+    VkDescriptorPool batchDescriptorPool_ = VK_NULL_HANDLE;
+    size_t batchPoolCapacity_ = 0;   // how many sets batchDescriptorPool_ currently supports
+    std::vector<VkDescriptorSet> batchSets_;
+    std::vector<std::unique_ptr<VulkanBuffer>> batchBufA_, batchBufB_, batchBufC_;
+    std::vector<VkDeviceSize> batchCapA_, batchCapB_, batchCapC_;
 };
 
 } // namespace stakml::vulkan
