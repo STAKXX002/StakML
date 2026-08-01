@@ -1,5 +1,4 @@
 #include "vulkan_matmul.hpp"
-#include "vulkan_buffer.hpp"
 #include <array>
 #include <fstream>
 #include <vector>
@@ -40,13 +39,11 @@ VulkanMatmul::VulkanMatmul(VulkanContext& ctx) : ctx_(ctx) {
     VkDescriptorPoolSize poolSize{};
     poolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSize.descriptorCount = 3;
-
     VkDescriptorPoolCreateInfo dpoolInfo{};
     dpoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     dpoolInfo.poolSizeCount = 1;
     dpoolInfo.pPoolSizes = &poolSize;
     dpoolInfo.maxSets = 1;
-    dpoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     if (vkCreateDescriptorPool(ctx_.device(), &dpoolInfo, nullptr, &descriptorPool_) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor pool");
 
@@ -79,12 +76,10 @@ void VulkanMatmul::createDescriptorSetLayout() {
         bindings[i].descriptorCount = 1;
         bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
-
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
-
     if (vkCreateDescriptorSetLayout(ctx_.device(), &layoutInfo, nullptr, &dsLayout_) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor set layout");
 }
@@ -107,7 +102,6 @@ void VulkanMatmul::createPipeline() {
     layoutInfo.pSetLayouts = &dsLayout_;
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pcRange;
-
     if (vkCreatePipelineLayout(ctx_.device(), &layoutInfo, nullptr, &pipelineLayout_) != VK_SUCCESS)
         throw std::runtime_error("Failed to create pipeline layout");
 
@@ -115,7 +109,6 @@ void VulkanMatmul::createPipeline() {
     pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipelineInfo.stage = stageInfo;
     pipelineInfo.layout = pipelineLayout_;
-
     if (vkCreateComputePipelines(ctx_.device(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS)
         throw std::runtime_error("Failed to create compute pipeline");
 }
