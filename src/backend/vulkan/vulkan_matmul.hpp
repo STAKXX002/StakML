@@ -7,10 +7,14 @@
 
 namespace stakml::vulkan {
 
-// Dispatches C = A @ B (row-major float32) via a compute shader.
-// Owns the pipeline + descriptor set layout so repeated matmul() calls
-// don't rebuild Vulkan objects every time — those are the expensive,
-// reusable-across-calls pieces (unlike the buffers, which are per-call).
+// One independent matmul job: C = A @ B, all row-major float32.
+struct MatmulJob {
+    const float* A;
+    const float* B;
+    float* C;
+    size_t M, K, N;
+};
+
 class VulkanMatmul {
 public:
     explicit VulkanMatmul(VulkanContext& ctx);
