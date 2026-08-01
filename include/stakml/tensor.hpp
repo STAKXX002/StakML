@@ -309,8 +309,8 @@ public:
 #ifdef STAKML_CUDA
         cublas_matmul(raw_ptr(), other.raw_ptr(), result.raw_ptr(), M, K, N);
 #elif defined(STAKML_VULKAN)
-        static VulkanContext vk_ctx;
-        static VulkanMatmul vk_matmul(vk_ctx);
+        static stakml::vulkan::VulkanContext vk_ctx;
+        static stakml::vulkan::VulkanMatmul vk_matmul(vk_ctx);
         vk_matmul.run(raw_ptr(), other.raw_ptr(), result.raw_ptr(), M, K, N);
 #else
         const float* A = raw_ptr();
