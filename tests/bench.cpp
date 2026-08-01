@@ -45,13 +45,55 @@ void bench(const std::string& label, int warmup, int runs, Fn fn) {
 // 1. matmul at various sizes
 // ─────────────────────────────────────────────────────────────────────────────
 void bench_matmul() {
+
+    // ── Batching experiment: does one submission for N independent
+    // matmuls beat N separate submissions? Tests whether per-submission
+    // stall (not compute or allocation) is really the bottleneck at
+    // small/medium sizes.
+    #ifdef STAKML_VULKAN
+        std::cout << "\n── batching experiment (784x128 matmul x8) ─────────────\n";
+        {
+            const size_t M = 32, K = 784, N = 128;
+            const int batchCount = 8;
+
+            std::vector<std::vector<float>> As(batchCount, std::vector<float>(M*K));
+            std::vector<std::vector<float>> Bs(batchCount, std::vector<float>(K*N));
+            std::vector<std::vector<float>> Cs(batchCount, std::vector<float>(M*N));
+            for (int i = 0; i < batchCount; i++) {
+                for (auto& v : As[i]) v = float(rand()) / RAND_MAX;
+                for (auto& v : Bs[i]) v = float(rand()) / RAND_MAX;
+            }
+
+            stakml::vulkan::VulkanContext ctx;
+            stakml::vulkan::VulkanMatmul matmul(ctx);
+
+            // N separate run() calls — current behavior
+            bench("8x separate submissions", 1, 5, [&]{
+                for (int i = 0; i < batchCount; i++)
+                    matmul.run(As[i].data(), Bs[i].data(), Cs[i].data(), M, K, N);
+            });
+
+            // 1 batched submission for all 8
+            std::vector<stakml::vulkan::MatmulJob> jobs;
+            for (int i = 0; i < batchCount; i++)
+                jobs.push_back({As[i].data(), Bs[i].data(), Cs[i].data(), M, K, N});
+
+            bench("1x batched submission (8 jobs)", 1, 5, [&]{
+                matmul.runBatch(jobs);
+            });
+        }
+    #endif
+
     std::cout << "\n── matmul (naive triple loop) ──────────────────────────\n";
 
-    for (size_t N : {32u, 64u, 128u, 256u, 512u}) {
+    // Larger sizes — hunting for the CPU/GPU crossover point. Fewer warmup
+    // and runs since these get slow on CPU at 2048/4096 (O(N^3) triple loop).
+    std::cout << "\n── matmul (large sizes — CPU/GPU crossover search) ─────\n";
+    for (size_t N : {1024u, 2048u, 4096u}) {
         auto a = std::make_shared<Tensor>(Tensor::randn({N, N}));
         auto b = std::make_shared<Tensor>(Tensor::randn({N, N}));
         std::string label = "matmul " + std::to_string(N) + "x" + std::to_string(N);
-        bench(label, 2, 10, [&]{ ops::matmul(a, b); });
+        bench(label, 1, 3, [&]{ ops::matmul(a, b); });
     }
 
     // Rectangular: typical MLP shapes
