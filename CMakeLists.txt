@@ -74,7 +74,24 @@ if(STAKML_CUDA)
     # Expose CUDA toolkit headers so .cuh files resolve when included from .cpp
     target_include_directories(stakml INTERFACE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
-    message(STATUS "StakML: CUDA backend enabled (Phase 1 - cuBLAS matmul)")
+    # Phase 2: hand-written kernels (vecadd, relu, add_bias +backward,
+    # matmul_naive, matmul_tiled) — built as a separate static lib so
+    # consumers can link against either the cuBLAS path or these, or both.
+    set(CMAKE_CUDA_ARCHITECTURES native)
+    add_library(stakml_cuda_kernels STATIC
+        src/backend/cuda/vecadd.cu
+        src/backend/cuda/relu.cu
+        src/backend/cuda/relu_backward.cu
+        src/backend/cuda/add_bias.cu
+        src/backend/cuda/add_bias_backward.cu
+        src/backend/cuda/matmul_naive.cu
+        src/backend/cuda/matmul_tiled.cu)
+    target_include_directories(stakml_cuda_kernels PUBLIC include)
+    set_target_properties(stakml_cuda_kernels PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+    target_link_libraries(stakml INTERFACE stakml_cuda_kernels)
+
+    message(STATUS "StakML: CUDA backend enabled (Phase 1 - cuBLAS matmul, Phase 2 - hand-written kernels)")
 else()
     message(STATUS "StakML: CPU backend - OpenMP blocked matmul")
 endif()
