@@ -7,18 +7,31 @@ unless the project is built with `-DSTAKML_CUDA=ON`.
 
 | File | Purpose |
 |---|---|
-| `matmul.cuh` | Three matmul variants used by `tensor.hpp` (forward, `A@B.T`, `A.T@B`) |
+| `matmul.cuh` | Three matmul variants used by `tensor.hpp` (forward, `A@B.T`, `A.T@B`) - cuBLAS-backed |
+| `kernels.cuh` | Host-wrapper declarations for the hand-written kernels below |
+
+Hand-written kernel implementations live outside this header directory, in
+`src/backend/cuda/`, and are built into the `stakml_cuda_kernels` static lib:
+
+| File | Purpose |
+|---|---|
+| `vecadd.cu` | Element-wise vector add |
+| `relu.cu` / `relu_backward.cu` | ReLU forward and backward |
+| `add_bias.cu` / `add_bias_backward.cu` | Bias broadcast forward, and backward (shared-memory column reduction) |
+| `matmul_naive.cu` | One-thread-per-output-element matmul |
+| `matmul_tiled.cu` | Shared-memory tiled matmul |
 
 ## Roadmap
 
-### Phase 1 — cuBLAS wrappers (current)
+### Phase 1 — cuBLAS wrappers (shipped)
 `matmul.cuh` delegates to `cublasSgemm`. Tensors live on the host; each call
 does host→device, compute, device→host. Correct and fast. Requires `libcublas`.
 
-### Phase 2 — hand-written tiled SGEMM
-Replace `cublas_matmul` / `cublas_matmul_A_BT` / `cublas_matmul_AT_B` with a
-shared-memory tiled kernel. No cuBLAS dependency. Goal: understand the memory
-hierarchy, tile size tuning, and occupancy.
+### Phase 2 — hand-written kernels (shipped)
+`src/backend/cuda/` - no cuBLAS dependency. Covers vecadd, relu (+backward),
+add_bias (+backward), and both naive and shared-memory-tiled matmul. Built
+whenever `-DSTAKML_CUDA=ON` is set; not yet swapped in as the default matmul
+path used by `tensor.hpp` (still Phase 1/cuBLAS for that).
 
 ### Phase 3 — elementwise kernels + fused ops
 Add `elementwise.cuh` (ReLU, sigmoid, tanh, scalar mul/add) and `reduce.cuh`

@@ -40,6 +40,7 @@ opt.zero_grad();
 | `dataset.hpp` | MNIST/CIFAR binary loader |
 | `serialize.hpp` | Save/load weights |
 | `cuda/matmul.cuh` | cuBLAS matmul backend (opt-in, Phase 1) |
+| `cuda/kernels.cuh` | Hand-written CUDA kernels - vecadd, relu (+backward), add_bias (+backward), matmul_naive, matmul_tiled (opt-in, Phase 2) |
 
 ## Building
 
@@ -96,12 +97,22 @@ cd build
 
 ```bash
 cd build
+ctest --output-on-failure
+```
+
+or run them individually:
+
+```bash
+cd build
 ./test_tensor
 ./test_backward
 ./test_graph
 ./test_loss
 ./test_optim
 ./test_conv
+./test_opts
+./test_serialize
+./stress_test
 ```
 
 ## Architecture
@@ -122,8 +133,8 @@ The graph is built implicitly during the forward pass. `tensor.backward()` does 
 
 ### CUDA (Nvidia)
 - Phase 1 (shipped, `main`): cuBLAS wrappers, `-DSTAKML_CUDA=ON`
-- Phase 2 (in progress, [`cuda-backend` branch](https://github.com/STAKXX002/StakML/tree/cuda-backend)): hand-written tiled SGEMM kernels in `cuda_sandbox/`
-- Phase 3 (planned): keep element-wise kernels on-device between layers
+- Phase 2 (shipped, `main`): hand-written kernels in `src/backend/cuda/` - `vecadd`, `relu` (+backward), `add_bias` (+backward), `matmul_naive`, `matmul_tiled`. Built as the `stakml_cuda_kernels` static lib whenever `STAKML_CUDA=ON`.
+- Phase 3 (planned): keep element-wise kernels on-device between layers instead of round-tripping through host memory
 
 See [`include/stakml/cuda/Readme.md`](include/stakml/cuda/Readme.md).
 
