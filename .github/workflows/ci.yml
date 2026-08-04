@@ -8,7 +8,23 @@ on:
 
 jobs:
   build-and-test:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cpu
+            cmake_flags: ""
+            run_tests: true
+
+          - name: cuda
+            cmake_flags: "-DSTAKML_CUDA=ON"
+            run_tests: false   # no GPU on GitHub-hosted runners - build-only smoke test
+
+          - name: vulkan
+            cmake_flags: "-DSTAKML_VULKAN=ON"
+            run_tests: false   # no GPU on GitHub-hosted runners - build-only smoke test
 
     steps:
       - uses: actions/checkout@v4
@@ -18,11 +34,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake g++ libomp-dev
 
+      - name: Install CUDA toolkit
+        if: matrix.name == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: '12.4.1'
+          method: network
+
+      - name: Install Vulkan SDK + shader tools
+        if: matrix.name == 'vulkan'
+        run: sudo apt-get install -y libvulkan-dev glslang-tools
+
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_flags }}
 
       - name: Build
         run: cmake --build build -j$(nproc)
 
       - name: Run tests
+        if: matrix.run_tests
         run: ctest --test-dir build --output-on-failure
