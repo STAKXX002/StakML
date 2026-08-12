@@ -9,22 +9,30 @@ on:
 jobs:
   build-and-test:
     name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: cpu
+            os: ubuntu-latest
             cmake_flags: ""
             run_tests: true
 
           - name: cuda
+            os: ubuntu-latest
             cmake_flags: "-DSTAKML_CUDA=ON"
             run_tests: false   # no GPU on GitHub-hosted runners - build-only smoke test
 
           - name: vulkan
+            os: ubuntu-latest
             cmake_flags: "-DSTAKML_VULKAN=ON"
             run_tests: false   # no GPU on GitHub-hosted runners - build-only smoke test
+
+          - name: arm64
+            os: ubuntu-24.04-arm
+            cmake_flags: ""
+            run_tests: true    # real AArch64 hardware - full ctest suite runs natively
 
     steps:
       - uses: actions/checkout@v4
@@ -56,3 +64,11 @@ jobs:
       - name: Run tests
         if: matrix.run_tests
         run: ctest --test-dir build --output-on-failure
+
+      - name: Check NEON auto-vectorization on matmul
+        if: matrix.name == 'arm64'
+        run: |
+          g++ -O3 -march=native -ffast-math -fopenmp -Iinclude \
+              -fopt-info-vec-optimized -c tests/bench.cpp -o /tmp/bench.o 2>&1 \
+              | tee /tmp/vecreport.txt | grep -i "tensor.hpp" \
+              || echo "No vectorization report lines matched tensor.hpp - inspect /tmp/vecreport.txt manually"
