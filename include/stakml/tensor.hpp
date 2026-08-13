@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <unordered_set>
 #include <algorithm>
+#include "grad_utils.hpp"
 
 // ── CUDA backend (opt-in) ─────────────────────────────────────────────────────
 // Define STAKML_CUDA at compile time to swap the three matmul implementations
@@ -281,8 +282,7 @@ public:
     // In-place add (for gradient accumulation later)
     Tensor& operator+=(const Tensor& other) {
         check_same_shape(other, "+=");
-        for (size_t i = 0; i < num_elements(); ++i)
-            raw_ptr()[i] += other.raw_ptr()[i];
+        accumulate(raw_ptr(), other.raw_ptr(), num_elements());
         return *this;
     }
 
