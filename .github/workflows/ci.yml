@@ -18,6 +18,7 @@ jobs:
             os: ubuntu-latest
             cmake_flags: ""
             run_tests: true
+            run_bench: true    # x86 baseline - compared against the arm64 leg below
 
           - name: cuda
             os: ubuntu-latest
@@ -33,6 +34,7 @@ jobs:
             os: ubuntu-24.04-arm
             cmake_flags: ""
             run_tests: true    # real AArch64 hardware - full ctest suite runs natively
+            run_bench: true    # compared against the cpu (x86) leg above
 
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +66,10 @@ jobs:
       - name: Run tests
         if: matrix.run_tests
         run: ctest --test-dir build --output-on-failure
+
+      - name: Run benchmark
+        if: matrix.run_bench
+        run: ./build/bench
 
       - name: Check NEON auto-vectorization on matmul
         if: matrix.name == 'arm64'
