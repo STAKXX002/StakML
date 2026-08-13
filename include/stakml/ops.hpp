@@ -51,8 +51,8 @@ inline Tensor matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
         float* gbP = b->grad().raw_ptr();
         const float* daP = dA.raw_ptr();
         const float* dbP = dB.raw_ptr();
-        for (size_t i = 0; i < nA; ++i) gaP[i] += daP[i];
-        for (size_t i = 0; i < nB; ++i) gbP[i] += dbP[i];
+        accumulate(gaP, daP, nA);
+        accumulate(gbP, dbP, nB);
     };
 
     return result;
