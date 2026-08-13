@@ -372,11 +372,7 @@ struct Flatten : public Module {
 
         flat.backward_fn_ = [x, grad_out, x_shape]() {
             // gradient has same elements, just different shape
-            const float* gop = grad_out->raw_ptr();
-            float*       gxp = x->grad().raw_ptr();
-            size_t n = x->num_elements();
-            for (size_t i = 0; i < n; ++i)
-                gxp[i] += gop[i];
+            accumulate(x->grad().raw_ptr(), grad_out->raw_ptr(), x->num_elements());
         };
 
         return flat;
