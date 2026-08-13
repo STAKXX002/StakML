@@ -41,6 +41,42 @@
 namespace stakml {
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NHWC <-> NCHW permute helpers
+//
+// conv2d_forward's matmul produces NHWC layout (channels last, since that's
+// what falls out of col @ W_flat.T), but the layer's public shape is NCHW
+// (channels first, matching PyTorch). The forward pass permutes NHWC->NCHW
+// on the way out; the backward pass permutes the incoming NCHW gradient
+// back to NHWC to do the matching matmul. Same index arithmetic, opposite
+// direction — factored out once instead of duplicated in both places.
+// ─────────────────────────────────────────────────────────────────────────────
+inline void permute_nhwc_to_nchw(const float* src, float* dst,
+                                  size_t N, size_t C, size_t H, size_t W)
+{
+    for (size_t n = 0; n < N; ++n)
+        for (size_t h = 0; h < H; ++h)
+            for (size_t w = 0; w < W; ++w)
+                for (size_t c = 0; c < C; ++c) {
+                    size_t src_idx = n*(H*W*C) + h*(W*C) + w*C + c;
+                    size_t dst_idx = n*(C*H*W) + c*(H*W) + h*W + w;
+                    dst[dst_idx] = src[src_idx];
+                }
+}
+
+inline void permute_nchw_to_nhwc(const float* src, float* dst,
+                                  size_t N, size_t C, size_t H, size_t W)
+{
+    for (size_t n = 0; n < N; ++n)
+        for (size_t c = 0; c < C; ++c)
+            for (size_t h = 0; h < H; ++h)
+                for (size_t w = 0; w < W; ++w) {
+                    size_t src_idx = n*(C*H*W) + c*(H*W) + h*W + w;
+                    size_t dst_idx = n*(H*W*C) + h*(W*C) + w*C + c;
+                    dst[dst_idx] = src[src_idx];
+                }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // im2col
 //
 // Converts a 4D input tensor {N, C, H, W} into a 2D column matrix
@@ -252,22 +288,10 @@ inline Tensor conv2d_forward(std::shared_ptr<Tensor> x,
     // {N, H_out, W_out, C_out} logically — channels are the LAST dim.
     // PyTorch uses NCHW (channels first), so we need to permute.
     //
-    // We do this with an explicit copy loop (no in-place permute yet):
+    // We do this with a shared helper (no in-place permute yet):
     //   NHWC[n,h,w,c] → NCHW[n,c,h,w]
     Tensor result({N, C_out, H_out, W_out}, 0.0f);
-    {
-        const float* src = out_flat.raw_ptr();  // NHWC layout
-        float*       dst = result.raw_ptr();    // NCHW layout
-
-        for (size_t n = 0; n < N; ++n)
-            for (size_t h = 0; h < H_out; ++h)
-                for (size_t ww = 0; ww < W_out; ++ww)
-                    for (size_t c = 0; c < C_out; ++c) {
-                        size_t src_idx = n*(H_out*W_out*C_out) + h*(W_out*C_out) + ww*C_out + c;
-                        size_t dst_idx = n*(C_out*H_out*W_out) + c*(H_out*W_out) + h*W_out + ww;
-                        dst[dst_idx] = src[src_idx];
-                    }
-    }
+    permute_nhwc_to_nchw(out_flat.raw_ptr(), result.raw_ptr(), N, C_out, H_out, W_out);
 
     // ── 6. Stamp graph node ───────────────────────────────────────────────────
     result.op_name_ = "conv2d";
@@ -289,18 +313,7 @@ inline Tensor conv2d_forward(std::shared_ptr<Tensor> x,
         // Convert back to NHWC flat {N*H_out*W_out, C_out} for math
 
         Tensor d_out_flat({N * H_out * W_out, C_out}, 0.0f);
-        {
-            const float* src = grad_out->raw_ptr();  // NCHW
-            float*       dst = d_out_flat.raw_ptr(); // NHWC
-            for (size_t n = 0; n < N; ++n)
-                for (size_t c = 0; c < C_out; ++c)
-                    for (size_t h = 0; h < H_out; ++h)
-                        for (size_t ww = 0; ww < W_out; ++ww) {
-                            size_t src_idx = n*(C_out*H_out*W_out) + c*(H_out*W_out) + h*W_out + ww;
-                            size_t dst_idx = n*(H_out*W_out*C_out) + h*(W_out*C_out) + ww*C_out + c;
-                            dst[dst_idx] = src[src_idx];
-                        }
-        }
+        permute_nchw_to_nhwc(grad_out->raw_ptr(), d_out_flat.raw_ptr(), N, C_out, H_out, W_out);
 
         // ── dW: {C_out, C_in*kH*kW} = d_out_flat.T @ col ────────────────────
         // d_out_flat: {N*H_out*W_out, C_out}
@@ -312,7 +325,7 @@ inline Tensor conv2d_forward(std::shared_ptr<Tensor> x,
         float*       gW = W->grad().raw_ptr();
         const float* dw = dW_flat.raw_ptr();
         size_t nW = W->num_elements();
-        for (size_t i = 0; i < nW; ++i) gW[i] += dw[i];
+        accumulate(gW, dw, nW);
 
         // ── dbias: sum d_out_flat over all rows → {C_out} ────────────────────
         float*       gb   = bias->grad().raw_ptr();
@@ -333,7 +346,7 @@ inline Tensor conv2d_forward(std::shared_ptr<Tensor> x,
         float*       gx  = x->grad().raw_ptr();
         const float* di  = d_input.raw_ptr();
         size_t nX = x->num_elements();
-        for (size_t i = 0; i < nX; ++i) gx[i] += di[i];
+        accumulate(gx, di, nX);
     };
 
     return result;
