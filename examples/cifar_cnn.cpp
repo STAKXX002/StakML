@@ -114,12 +114,63 @@ void normalize_cifar(CIFARDataset& ds) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Build a batch tensor {batch_size, 3, 32, 32} from a dataset + index list
+// Data augmentation: pad-4-then-random-crop-32 + random horizontal flip.
+// Standard CIFAR-10 recipe (used in the original ResNet paper).
+//
+// WHY THIS HELPS:
+//   The CNN was memorising exact pixel positions (train >> test accuracy).
+//   Randomly shifting the crop window (±4px) and mirroring left/right
+//   forces the filters to learn features that are position- and
+//   orientation-invariant, instead of exact spatial memorisation.
+//
+// Only applied to TRAINING batches — test-time evaluation must see the
+// unmodified image, or accuracy numbers stop being comparable across runs.
+// ─────────────────────────────────────────────────────────────────────────────
+void augment_image(float* img, std::mt19937& rng) {
+    constexpr size_t C = 3, H = 32, W = 32, PAD = 4;
+    constexpr size_t HP = H + 2 * PAD, WP = W + 2 * PAD;
+
+    // Pad into a scratch buffer (zero padding — images are already
+    // mean/std normalised by this point, so 0.0f is not neutral gray,
+    // but it's what the standard recipe uses and it works fine in practice)
+    thread_local std::vector<float> padded(C * HP * WP);
+    std::fill(padded.begin(), padded.end(), 0.0f);
+    for (size_t c = 0; c < C; ++c)
+        for (size_t h = 0; h < H; ++h)
+            for (size_t w = 0; w < W; ++w)
+                padded[c * HP * WP + (h + PAD) * WP + (w + PAD)] =
+                    img[c * H * W + h * W + w];
+
+    // Random crop origin in [0, 2*PAD]
+    std::uniform_int_distribution<size_t> off_dist(0, 2 * PAD);
+    size_t oy = off_dist(rng);
+    size_t ox = off_dist(rng);
+
+    // Random horizontal flip, 50/50
+    std::bernoulli_distribution flip_dist(0.5);
+    bool flip = flip_dist(rng);
+
+    for (size_t c = 0; c < C; ++c)
+        for (size_t h = 0; h < H; ++h)
+            for (size_t w = 0; w < W; ++w) {
+                size_t src_w = flip ? (W - 1 - w) : w;
+                img[c * H * W + h * W + w] =
+                    padded[c * HP * WP + (h + oy) * WP + (src_w + ox)];
+            }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build a batch tensor {batch_size, 3, 32, 32} from a dataset + index list.
+//
+// augment=true applies random crop + flip per-sample (training only).
+// Pass a dedicated rng so augmentation randomness is independent of the
+// epoch-shuffle rng.
 // ─────────────────────────────────────────────────────────────────────────────
 std::pair<std::shared_ptr<Tensor>, std::vector<int>>
 make_batch(const CIFARDataset& ds,
            const std::vector<size_t>& indices,
-           size_t start, size_t batch_size)
+           size_t start, size_t batch_size,
+           bool augment, std::mt19937& aug_rng)
 {
     constexpr size_t PIXELS = 3 * 32 * 32;
 
@@ -135,6 +186,9 @@ make_batch(const CIFARDataset& ds,
         std::copy(src + idx * PIXELS, src + (idx + 1) * PIXELS,
                   xp + i * PIXELS);
         Y[i] = ds.labels[idx];
+
+        if (augment)
+            augment_image(xp + i * PIXELS, aug_rng);
     }
     return {X, Y};
 }
@@ -184,8 +238,8 @@ int main() {
     //   Linear(4096→256) → ReLU
     //   Linear(256→10)
     //
-    // Target: ~70% test accuracy (respectable for a from-scratch CNN with no
-    //         data augmentation or BatchNorm)
+    // Target: with dropout + decoupled weight decay + crop/flip augmentation,
+    //         aiming to close the train/test gap that showed up without them.
     //
     nn::Sequential model({
         std::make_shared<nn::Conv2d>(3, 32, 3, 1, 1),
@@ -204,9 +258,11 @@ int main() {
 
     // ── 4. Optimizer ──────────────────────────────────────────────────────────
     // lr=1e-3 is the standard Adam default.
+    // weight_decay_=1e-4 is applied directly to the weights in Adam::step()
+    // (decoupled decay — this is the AdamW update rule).
     // We step down to 1e-4 at epoch 15 (see training loop).
     optim::Adam opt(model.parameters(), 1e-3f, 0.9f, 0.999f, 1e-8f, 1e-4f);
-    
+
     // ── 5. Hyperparameters ────────────────────────────────────────────────────
     constexpr size_t BATCH_SIZE  = 64;   // smaller than MNIST due to 4D tensors
     constexpr size_t EPOCHS      = 20;
@@ -219,11 +275,13 @@ int main() {
     std::vector<size_t> train_idx(N_TRAIN), test_idx(N_TEST);
     std::iota(train_idx.begin(), train_idx.end(), 0);
     std::iota(test_idx.begin(),  test_idx.end(),  0);
-    std::mt19937 rng(42);
+    std::mt19937 rng(42);       // epoch shuffle
+    std::mt19937 aug_rng(123);  // augmentation — separate stream on purpose
 
     std::cout << "Training (epochs=" << EPOCHS
               << ", batch=" << BATCH_SIZE
               << ", steps/epoch=" << TRAIN_STEPS << ")\n";
+    std::cout << "Augmentation: random crop (pad=4) + horizontal flip (train only)\n";
     std::cout << "──────────────────────────────────────────────────────────────\n";
 
     // ── 6. Training loop ──────────────────────────────────────────────────────
@@ -243,10 +301,11 @@ int main() {
         float total_loss = 0.0f;
         int   train_corr = 0;
 
-        model.set_training(true);   // ← ADD: enable dropout for training
+        model.set_training(true);   // enable dropout for training
 
         for (size_t step = 0; step < TRAIN_STEPS; ++step) {
-            auto [X, Y] = make_batch(train_ds, train_idx, step * BATCH_SIZE, BATCH_SIZE);
+            auto [X, Y] = make_batch(train_ds, train_idx, step * BATCH_SIZE,
+                                      BATCH_SIZE, /*augment=*/true, aug_rng);
 
             opt.zero_grad();
 
@@ -264,18 +323,19 @@ int main() {
             opt.step();
         }
 
-        // ── B. Test (no grad) ────────────────────────────────────────────────
-        model.set_training(false);  // ← ADD: disable dropout for evaluation
+        // ── B. Test (no grad, no augmentation) ──────────────────────────────
+        model.set_training(false);  // disable dropout for evaluation
 
         int test_corr = 0;
         for (size_t step = 0; step < TEST_STEPS; ++step) {
-            auto [X, Y] = make_batch(test_ds, test_idx, step * BATCH_SIZE, BATCH_SIZE);
+            auto [X, Y] = make_batch(test_ds, test_idx, step * BATCH_SIZE,
+                                      BATCH_SIZE, /*augment=*/false, aug_rng);
             Tensor logits = model.forward(X);
             test_corr += static_cast<int>(
                 ops::accuracy(logits, Y) * static_cast<float>(BATCH_SIZE));
         }
 
-        model.set_training(true);   // ← ADD: re-enable for next epoch
+        model.set_training(true);   // re-enable for next epoch
 
         auto t1 = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(t1 - t0).count();
