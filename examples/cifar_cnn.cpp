@@ -198,9 +198,23 @@ int main() {
     std::cout << "  StakML — CIFAR-10 CNN Training\n";
     std::cout << "══════════════════════════════════════════\n\n";
 
-    // ── 1. Load data ──────────────────────────────────────────────────────────
-    // Expects CIFAR-10 binary batches in ../data/cifar-10-batches-bin/
-    const std::string base = "../data/cifar-10-batches-bin/";
+    // ── 1. Locate the dataset ─────────────────────────────────────────────────
+    // Works whether you launch as `./cifar_cnn` from inside build/, or as
+    // `./build/cifar_cnn` from the repo root — tries both relative bases
+    // and uses whichever one actually has the data.
+    auto resolve_data_dir = []() -> std::string {
+        static const std::vector<std::string> candidates = {
+            "../data/cifar-10-batches-bin/",  // run from build/
+            "data/cifar-10-batches-bin/",     // run from repo root
+        };
+        for (const auto& c : candidates) {
+            std::ifstream probe(c + "data_batch_1.bin");
+            if (probe.good()) return c;
+        }
+        return candidates[0];  // fall back to build/-relative for the error message below
+    };
+    const std::string base = resolve_data_dir();
+
     std::vector<std::string> train_files = {
         base + "data_batch_1.bin",
         base + "data_batch_2.bin",
@@ -217,8 +231,8 @@ int main() {
         test_ds  = CIFARDataset::load({test_file});
     } catch (const std::exception& e) {
         std::cerr << "Failed to load CIFAR-10: " << e.what() << "\n";
-        std::cerr << "Download from: https://www.cs.toronto.edu/~kriz/cifar-10-binary.tar.gz\n";
-        std::cerr << "Extract to: ../data/cifar-10-batches-bin/\n";
+        std::cerr << "Run scripts/download_cifar.sh from the repo root, "
+                     "or see the Datasets section in README.md.\n";
         return 1;
     }
     std::cout << "Loaded " << train_ds.num_samples << " training images.\n";
