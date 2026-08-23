@@ -513,24 +513,36 @@ public:
 
     Tensor relu() const {
         Tensor result(shape_);
-        for (size_t i = 0; i < num_elements(); ++i){
-            float v = raw_ptr()[i];
-            result.raw_ptr()[i] = v > 0.0f ? v : 0.0f;
+        size_t n = num_elements();
+        const float* xp = raw_ptr();
+        float*       rp = result.raw_ptr();
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < n; ++i){
+            float v = xp[i];
+            rp[i] = v > 0.0f ? v : 0.0f;
         }
         return result;
     }
 
     Tensor sigmoid() const {
         Tensor result(shape_);
-        for (size_t i = 0; i < num_elements(); ++i)
-            result.raw_ptr()[i] = 1.0f / (1.0f + std::exp(-raw_ptr()[i]));
+        size_t n = num_elements();
+        const float* xp = raw_ptr();
+        float*       rp = result.raw_ptr();
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < n; ++i)
+            rp[i] = 1.0f / (1.0f + std::exp(-xp[i]));
         return result;
     }
 
     Tensor tanh_act() const {
         Tensor result(shape_);
-        for (size_t i = 0; i < num_elements(); ++i)
-            result.raw_ptr()[i] = std::tanh(raw_ptr()[i]);
+        size_t n = num_elements();
+        const float* xp = raw_ptr();
+        float*       rp = result.raw_ptr();
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < n; ++i)
+            rp[i] = std::tanh(xp[i]);
         return result;
     }
 

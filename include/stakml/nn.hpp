@@ -296,6 +296,7 @@ struct MaxPool2d : public Module {
         float*       out = result.raw_ptr();
         size_t*      msk = mask->data();
 
+        #pragma omp parallel for schedule(static) collapse(2)
         for (size_t n = 0; n < N; ++n)
         for (size_t c = 0; c < C; ++c)
         for (size_t h = 0; h < H_out; ++h)
@@ -331,14 +332,26 @@ struct MaxPool2d : public Module {
         auto grad_out = result.grad_;
 
         result.backward_fn_ = [x, grad_out, mask,
-                                N, C, H_out, W_out]() {
+                                N, C, H_out, W_out, this]() {
             const float*  gop = grad_out->raw_ptr();
             float*        gxp = x->grad().raw_ptr();
             const size_t* msk = mask->data();
-
             size_t total = N * C * H_out * W_out;
-            for (size_t i = 0; i < total; ++i)
-                gxp[msk[i]] += gop[i];  // route gradient to the winner
+
+            if (pool_stride >= pool_size) {
+                // Non-overlapping windows (the common case, e.g. 2x2/stride 2):
+                // every msk[i] is a distinct input index, so no two threads
+                // ever write the same gxp element — safe to parallelize.
+                #pragma omp parallel for schedule(static)
+                for (size_t i = 0; i < total; ++i)
+                    gxp[msk[i]] += gop[i];
+            } else {
+                // Overlapping windows: the same input pixel can be the max
+                // for multiple output positions, so parallel writes to gxp
+                // could race. Stay serial in this (currently unused) case.
+                for (size_t i = 0; i < total; ++i)
+                    gxp[msk[i]] += gop[i];
+            }
         };
 
         return result;

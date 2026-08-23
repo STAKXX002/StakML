@@ -93,6 +93,7 @@ inline Tensor add_bias(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> bias) 
     const float* xp = x->raw_ptr();
     const float* bp = bias->raw_ptr();
     float*       rp = result.raw_ptr();
+    #pragma omp parallel for schedule(static) collapse(2)
     for (size_t i = 0; i < batch; ++i)
         for (size_t j = 0; j < cols; ++j)
             rp[i*cols + j] = xp[i*cols + j] + bp[j];
@@ -110,11 +111,24 @@ inline Tensor add_bias(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> bias) 
         float*       gxp = x->grad().raw_ptr();   // accumulate into x
         float*       gbp = bias->grad().raw_ptr(); // accumulate into bias
 
+        // Two separate parallel passes instead of one combined loop:
+        // gbp[j] is a reduction over the batch dimension, so accumulating
+        // it while parallelizing over i would race across threads. Splitting
+        // the x-grad pass (safe over i, disjoint indices) from the bias-grad
+        // pass (safe over j, each thread owns one column's sum) keeps both
+        // parallel without a race.
+        #pragma omp parallel for schedule(static) collapse(2)
         for (size_t i = 0; i < batch; ++i)
-            for (size_t j = 0; j < cols; ++j) {
+            for (size_t j = 0; j < cols; ++j)
                 gxp[i*cols + j] += gop[i*cols + j];  // d_x = d_out (pass-through)
-                gbp[j]          += gop[i*cols + j];  // d_bias = sum over batch
-            }
+
+        #pragma omp parallel for schedule(static)
+        for (size_t j = 0; j < cols; ++j) {
+            float sum = 0.0f;
+            for (size_t i = 0; i < batch; ++i)
+                sum += gop[i*cols + j];
+            gbp[j] += sum;                            // d_bias = sum over batch
+        }
     };
 
     return result;
@@ -136,6 +150,7 @@ inline Tensor relu(std::shared_ptr<Tensor> x) {
         const float* xp  = x->raw_ptr();
         const float* gop = grad_out->raw_ptr();
         float*       gxp = x->grad().raw_ptr();   // accumulate
+        #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < n; ++i)
             gxp[i] += gop[i] * (xp[i] > 0.0f ? 1.0f : 0.0f);
     };
