@@ -53,6 +53,7 @@ namespace stakml {
 inline void permute_nhwc_to_nchw(const float* src, float* dst,
                                   size_t N, size_t C, size_t H, size_t W)
 {
+    #pragma omp parallel for schedule(static) collapse(2)
     for (size_t n = 0; n < N; ++n)
         for (size_t h = 0; h < H; ++h)
             for (size_t w = 0; w < W; ++w)
@@ -66,6 +67,7 @@ inline void permute_nhwc_to_nchw(const float* src, float* dst,
 inline void permute_nchw_to_nhwc(const float* src, float* dst,
                                   size_t N, size_t C, size_t H, size_t W)
 {
+    #pragma omp parallel for schedule(static) collapse(2)
     for (size_t n = 0; n < N; ++n)
         for (size_t c = 0; c < C; ++c)
             for (size_t h = 0; h < H; ++h)
@@ -277,6 +279,7 @@ inline Tensor conv2d_forward(std::shared_ptr<Tensor> x,
         float*       op  = out_flat.raw_ptr();
         const float* bp  = bias->raw_ptr();
         size_t rows = N * H_out * W_out;
+        #pragma omp parallel for schedule(static) collapse(2)
         for (size_t r = 0; r < rows; ++r)
             for (size_t c = 0; c < C_out; ++c)
                 op[r * C_out + c] += bp[c];
@@ -328,12 +331,19 @@ inline Tensor conv2d_forward(std::shared_ptr<Tensor> x,
         accumulate(gW, dw, nW);
 
         // ── dbias: sum d_out_flat over all rows → {C_out} ────────────────────
+        // Parallelized over c (each thread owns one output channel's sum),
+        // not over r — summing over r into a shared gb[c] across threads
+        // would race, same hazard as ops::add_bias's backward.
         float*       gb   = bias->grad().raw_ptr();
         const float* dof  = d_out_flat.raw_ptr();
         size_t rows = N * H_out * W_out;
-        for (size_t r = 0; r < rows; ++r)
-            for (size_t c = 0; c < C_out; ++c)
-                gb[c] += dof[r * C_out + c];
+        #pragma omp parallel for schedule(static)
+        for (size_t c = 0; c < C_out; ++c) {
+            float sum = 0.0f;
+            for (size_t r = 0; r < rows; ++r)
+                sum += dof[r * C_out + c];
+            gb[c] += sum;
+        }
 
         // ── d_col: {N*H_out*W_out, C_in*kH*kW} = d_out_flat @ W_flat ────────
         // W_flat: {C_out, kernel_flat}

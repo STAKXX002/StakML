@@ -25,8 +25,12 @@
 namespace stakml {
 
 // accumulate: dst[i] += src[i] for i in [0, n)
-// The gradient-accumulation primitive used by every backward_fn_.
+// The gradient-accumulation primitive used by every backward_fn_ in the
+// codebase (matmul, conv dW/d_input, Dropout, Flatten, operator+=) — this
+// is on the hot path of every single backward call, so it's worth
+// parallelizing + vectorizing centrally rather than per call site.
 inline void accumulate(float* dst, const float* src, size_t n) {
+    #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < n; ++i) dst[i] += src[i];
 }
 
