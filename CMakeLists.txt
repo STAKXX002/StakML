@@ -53,8 +53,7 @@ endif()
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra -fsanitize=address,undefined")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math")
-
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math -mprefer-vector-width=512")
 # ── Library ───────────────────────────────────────────────────────────────────
 add_library(stakml INTERFACE)
 target_include_directories(stakml INTERFACE include)
