@@ -32,3 +32,5 @@ data/
 # Compressed archives (the tar we made)
 *.tar.gz
 *.zip
+
+.venv/
