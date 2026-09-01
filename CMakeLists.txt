@@ -53,7 +53,17 @@ endif()
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra -fsanitize=address,undefined")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math -mprefer-vector-width=512")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math")
+
+# -mprefer-vector-width=512 is x86-only (AVX-512 register-width preference)
+# and GCC/Clang on ARM (aarch64, Apple Silicon, ARM CI runners) reject it
+# outright as an unrecognized flag, hard-failing the whole build. Test for
+# support instead of assuming the target architecture.
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-mprefer-vector-width=512" STAKML_HAS_PREFER_VECTOR_WIDTH_512)
+if(STAKML_HAS_PREFER_VECTOR_WIDTH_512)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -mprefer-vector-width=512")
+endif()
 # ── Library ───────────────────────────────────────────────────────────────────
 add_library(stakml INTERFACE)
 target_include_directories(stakml INTERFACE include)
