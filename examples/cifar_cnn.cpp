@@ -375,5 +375,27 @@ int main() {
     stakml::serialize::save_model(model, "cifar_weights.bin");
     std::cout << "Saved trained weights to cifar_weights.bin\n";
 
+    // ── Verification dump: one test image + StakML's logits for it ─────────
+    // Pulls test image #0 (already normalised, same as training) and its
+    // label, writes the raw pixel floats + StakML's logits to disk so
+    // Python can replay the same input through the ONNX export and diff.
+    {
+        constexpr size_t PIXELS = 3 * 32 * 32;
+        const float* img0_ptr = test_ds.images.raw_ptr(); // image 0 is the first PIXELS floats
+        std::vector<float> img0(img0_ptr, img0_ptr + PIXELS);
+
+        auto x = std::make_shared<Tensor>(Tensor({1, 3, 32, 32}, img0));
+        Tensor logits = model.forward(x);
+
+        std::ofstream img_out("verify_input.bin", std::ios::binary);
+        img_out.write(reinterpret_cast<const char*>(img0.data()), PIXELS * sizeof(float));
+
+        std::ofstream logit_out("verify_stakml_logits.bin", std::ios::binary);
+        logit_out.write(reinterpret_cast<const char*>(logits.raw_ptr()), 10 * sizeof(float));
+
+        std::cout << "Wrote verify_input.bin and verify_stakml_logits.bin "
+                     "(test image #0, label=" << test_ds.labels[0] << ")\n";
+    }
+
     return 0;
 }
