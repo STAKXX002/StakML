@@ -4,6 +4,7 @@
 #include "stakml/conv.hpp"
 #include "stakml/loss.hpp"
 #include "stakml/optim.hpp"
+#include "stakml/serialize.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
