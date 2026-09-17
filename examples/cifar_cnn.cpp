@@ -370,5 +370,10 @@ int main() {
 
     std::cout << "──────────────────────────────────────────────────────────────\n";
     std::cout << "Done.\n";
+
+    model.set_training(false);   // disable dropout before saving/verifying
+    stakml::serialize::save_model(model, "cifar_weights.bin");
+    std::cout << "Saved trained weights to cifar_weights.bin\n";
+
     return 0;
 }
